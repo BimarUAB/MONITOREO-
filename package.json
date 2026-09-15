@@ -1,0 +1,22 @@
+{
+  "name": "seguimiento-academico",
+  "version": "1.0.0",
+  "description": "Módulo de Seguimiento Académico - UE JESÚS MARÍA FE Y ALEGRÍA",
+  "main": "server.js",
+  "private": true,
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "seed": "node src/seed.js",
+    "backup": "node src/backup.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.4.0"
+  }
+}
