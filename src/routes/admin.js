@@ -7,17 +7,64 @@ const {
 } = require('../middleware');
 
 const router = express.Router();
-router.use(['/usuarios', '/cursos', '/materias'], requireRole('admin'));
+router.use(['/usuarios', '/cursos', '/materias', '/admin/notificaciones'], requireRole('admin'));
 
-const ROLES = ['admin', 'docente', 'tutor', 'estudiante'];
-const MATERIAS_OFICIALES = new Set([
-  'LENGUA CASTELLANA Y ORIGINARIA', 'LENGUA EXTRANJERA', 'CIENCIAS SOCIALES',
-  'EDUCACIÓN FÍSICA Y DEPORTES', 'EDUCACIÓN MUSICAL', 'ARTES PLÁSTICAS Y VISUALES',
-  'MATEMÁTICA', 'TÉCNICA TECNOLÓGICA GENERAL', 'COMPUTACIÓN / INFORMÁTICA',
-  'CIENCIAS NATURALES BIOLOGÍA - GEOGRAFIA', 'CIENCIAS NATURALES: FÍSICA',
-  'CIENCIAS NATURALES: QUÍMICA', 'COSMOVISIONES FILOSOFÍA Y PSICOLOGIA',
-  'VALORES ESPIRITUALIDAD Y RELIGIONES',
-]);
+const ROLES = ['admin', 'docente', 'tutor', 'estudiante', 'asistencia'];
+function normalizarNombreMateria(nombre) {
+  return String(nombre || '').replace(/\s+/g, ' ').trim().toUpperCase();
+}
+
+// ---------- GESTIÓN DE NOTIFICACIONES ----------
+router.get('/admin/notificaciones', asyncHandler(async (req, res) => {
+  const datos = db.prepare(`
+    SELECT n.id, n.titulo, n.mensaje, n.tipo, n.leida, n.created_at,
+           u.id AS usuario_id, u.nombres || ' ' || u.apellidos AS destinatario, u.rol
+    FROM notificaciones n JOIN usuarios u ON u.id = n.usuario_id
+    ORDER BY n.created_at DESC, n.id DESC LIMIT 300
+  `).all();
+  res.json(datos);
+}));
+
+router.post('/admin/notificaciones', asyncHandler(async (req, res) => {
+  const { titulo, mensaje, tipo, destino, rol, usuario_id, curso_id } = req.body || {};
+  requerirCampos({ titulo, mensaje, destino }, ['titulo', 'mensaje', 'destino']);
+  const destinosValidos = ['todos', 'rol', 'usuario', 'curso'];
+  if (!destinosValidos.includes(destino)) throw badRequest(`destino debe ser: ${destinosValidos.join(', ')}`);
+  const rolesValidos = ['admin', 'docente', 'tutor', 'estudiante'];
+  let usuarios;
+  if (destino === 'todos') {
+    usuarios = db.prepare('SELECT id FROM usuarios WHERE activo = 1').all();
+  } else if (destino === 'rol') {
+    if (!rolesValidos.includes(rol)) throw badRequest('rol inválido');
+    usuarios = db.prepare('SELECT id FROM usuarios WHERE activo = 1 AND rol = ?').all(rol);
+  } else if (destino === 'usuario') {
+    if (!esEnteroPositivo(usuario_id)) throw badRequest('usuario_id inválido');
+    const usuario = db.prepare('SELECT id FROM usuarios WHERE id = ? AND activo = 1').get(usuario_id);
+    if (!usuario) throw noEncontrado('Usuario destinatario no encontrado');
+    usuarios = [usuario];
+  } else {
+    if (!esEnteroPositivo(curso_id)) throw badRequest('curso_id inválido');
+    const curso = db.prepare('SELECT id FROM cursos WHERE id = ?').get(curso_id);
+    if (!curso) throw noEncontrado('Curso no encontrado');
+    usuarios = db.prepare(`
+      SELECT DISTINCT u.id FROM usuarios u
+      LEFT JOIN tutor_estudiante te ON te.tutor_id = u.id
+      LEFT JOIN estudiantes e ON e.id = te.estudiante_id
+      LEFT JOIN asignaciones a ON a.docente_id = u.id AND a.curso_id = ?
+      WHERE u.activo = 1 AND ((u.rol = 'tutor' AND e.curso_id = ?) OR (u.rol = 'docente' AND a.id IS NOT NULL))
+    `).all(curso_id, curso_id);
+  }
+  if (!usuarios.length) throw badRequest('No hay destinatarios activos para ese filtro');
+  const insertar = db.prepare('INSERT INTO notificaciones (usuario_id, titulo, mensaje, tipo) VALUES (?,?,?,?)');
+  db.tx(() => usuarios.forEach((usuario) => insertar.run(usuario.id, String(titulo).trim(), String(mensaje).trim(), tipo || 'administrativa')));
+  res.status(201).json({ mensaje: 'Notificación enviada correctamente', destinatarios: usuarios.length });
+}));
+
+router.delete('/admin/notificaciones/:id', asyncHandler(async (req, res) => {
+  const resultado = db.prepare('DELETE FROM notificaciones WHERE id = ?').run(req.params.id);
+  if (!resultado.changes) throw noEncontrado('Notificación no encontrada');
+  res.json({ mensaje: 'Notificación eliminada correctamente' });
+}));
 
 // ---------- USUARIOS ----------
 router.get('/usuarios', asyncHandler(async (req, res) => {
@@ -140,6 +187,10 @@ router.delete('/cursos/:id', asyncHandler(async (req, res) => {
 }));
 
 // ---------- MATERIAS ----------
+router.get('/materias/catalogo', asyncHandler(async (req, res) => {
+  res.json(db.prepare('SELECT nombre FROM materias ORDER BY nombre').all().map((materia) => materia.nombre));
+}));
+
 router.get('/materias', asyncHandler(async (req, res) => {
   res.json(db.prepare('SELECT * FROM materias ORDER BY nombre').all());
 }));
@@ -147,24 +198,24 @@ router.get('/materias', asyncHandler(async (req, res) => {
 router.post('/materias', asyncHandler(async (req, res) => {
   const { nombre, descripcion } = req.body || {};
   requerirCampos({ nombre }, ['nombre']);
-  if (!MATERIAS_OFICIALES.has(String(nombre).trim())) throw badRequest('La materia no pertenece al catálogo oficial');
-  const existe = db.prepare('SELECT id FROM materias WHERE nombre = ?').get(nombre);
+  const nombreFinal = normalizarNombreMateria(nombre);
+  const existe = db.prepare('SELECT id FROM materias WHERE nombre = ?').get(nombreFinal);
   if (existe) throw conflicto('Ya existe una materia con ese nombre');
-  const r = db.prepare('INSERT INTO materias (nombre, descripcion) VALUES (?,?)').run(nombre, descripcion || null);
-  res.status(201).json({ id: Number(r.lastInsertRowid), nombre });
+  const r = db.prepare('INSERT INTO materias (nombre, descripcion) VALUES (?,?)').run(nombreFinal, descripcion || null);
+  res.status(201).json({ id: Number(r.lastInsertRowid), nombre: nombreFinal });
 }));
 
 router.put('/materias/:id', asyncHandler(async (req, res) => {
   const materia = db.prepare('SELECT * FROM materias WHERE id = ?').get(req.params.id);
   if (!materia) throw noEncontrado('Materia no encontrada');
   const { nombre, descripcion } = req.body || {};
-  if (nombre && !MATERIAS_OFICIALES.has(String(nombre).trim())) throw badRequest('La materia no pertenece al catálogo oficial');
-  if (nombre && nombre !== materia.nombre) {
-    const existe = db.prepare('SELECT id FROM materias WHERE nombre = ? AND id != ?').get(nombre, materia.id);
+  const nombreFinal = nombre ? normalizarNombreMateria(nombre) : materia.nombre;
+  if (nombreFinal !== materia.nombre) {
+    const existe = db.prepare('SELECT id FROM materias WHERE nombre = ? AND id != ?').get(nombreFinal, materia.id);
     if (existe) throw conflicto('Ya existe una materia con ese nombre');
   }
   db.prepare('UPDATE materias SET nombre=?, descripcion=? WHERE id=?')
-    .run(nombre || materia.nombre, descripcion !== undefined ? descripcion : materia.descripcion, materia.id);
+    .run(nombreFinal, descripcion !== undefined ? descripcion : materia.descripcion, materia.id);
   res.json({ mensaje: 'Materia actualizada correctamente' });
 }));
 

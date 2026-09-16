@@ -61,6 +61,11 @@ function puntosNecesarios(trimestres) {
   return redondear2(Math.max(0, PUNTOS_APROBACION - suma));
 }
 
+function puntosFaltantesAprobacion(promedio) {
+  if (promedio === null || promedio === undefined) return null;
+  return redondear2(Math.max(0, UMBRAL_APROBACION - Number(promedio)));
+}
+
 function porcentajeTrimestresRegistrados(trimestres) {
   const n = trimestres.filter((trimestre) => trimestre !== null && trimestre !== undefined).length;
   return Math.round((n / TRIMESTRES_POR_GESTION) * 100);
@@ -98,6 +103,7 @@ module.exports = {
   semaforo,
   aprobado,
   puntosNecesarios,
+  puntosFaltantesAprobacion,
   porcentajeTrimestresRegistrados,
   resumenAsistencia,
 };

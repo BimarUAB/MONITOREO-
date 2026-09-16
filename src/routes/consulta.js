@@ -5,7 +5,7 @@ const multer = require('multer');
 const db = require('../db');
 const {
   promedioTrimestre, cualitativo, promedioAnual, semaforo, aprobado,
-  puntosNecesarios, porcentajeTrimestresRegistrados, resumenAsistencia,
+  puntosNecesarios, puntosFaltantesAprobacion, porcentajeTrimestresRegistrados, resumenAsistencia,
 } = require('../helpers');
 const {
   requerirCampos, badRequest, noEncontrado, prohibido,
@@ -112,6 +112,7 @@ function expedienteDe(estudianteId) {
       semaforo: semaforo(anual),
       aprobado: aprobado(anual),
       puntos_necesarios: puntosNecesarios(proms),
+      puntos_faltantes_aprobacion: puntosFaltantesAprobacion(anual),
       porcentaje_registrado: porcentajeTrimestresRegistrados(proms),
       promedio_curso: promedioGeneralCurso(a.materia_id),
     };

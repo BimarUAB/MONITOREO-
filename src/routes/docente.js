@@ -10,7 +10,8 @@ const {
 } = require('../middleware');
 
 const router = express.Router();
-router.use(['/docente', '/notas', '/tareas', '/entregas', '/asistencias', '/observaciones', '/materiales', '/comunicados'], requireRole('docente', 'admin'));
+router.use(['/docente', '/notas', '/tareas', '/entregas', '/observaciones', '/materiales', '/comunicados'], requireRole('docente', 'admin'));
+router.use(['/asistencias', '/asistencia'], requireRole('docente', 'admin', 'asistencia'));
 
 const UPLOAD_DIR = path.join(__dirname, '..', '..', 'uploads');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -81,6 +82,38 @@ router.get('/docente/asignaciones', asyncHandler(async (req, res) => {
   }
   sql += ' ORDER BY g.anio DESC, c.nombre, m.nombre';
   res.json(db.prepare(sql).all(...params));
+}));
+
+router.get('/asistencia/cursos', asyncHandler(async (req, res) => {
+  const gestion = db.prepare('SELECT id FROM gestiones WHERE activa = 1 LIMIT 1').get();
+  if (!gestion) return res.json([]);
+  const cursos = db.prepare(`
+    SELECT c.id, c.nombre, c.capacidad_max,
+           (SELECT COUNT(*) FROM estudiantes e WHERE e.curso_id = c.id) AS total_estudiantes,
+           GROUP_CONCAT(DISTINCT u.nombres || ' ' || u.apellidos) AS docentes
+    FROM cursos c
+    LEFT JOIN asignaciones a ON a.curso_id = c.id AND a.gestion_id = c.gestion_id
+    LEFT JOIN usuarios u ON u.id = a.docente_id
+    WHERE c.gestion_id = ? GROUP BY c.id ORDER BY c.nombre
+  `).all(gestion.id);
+  res.json(cursos);
+}));
+
+router.get('/asistencia/estudiantes', asyncHandler(async (req, res) => {
+  const { curso_id } = req.query;
+  if (curso_id !== undefined && !esEnteroPositivo(curso_id)) throw badRequest('curso_id inválido');
+  const busqueda = String(req.query.q || '').trim();
+  if (busqueda.length < 2) return res.json({ estudiantes: [] });
+  const patron = `%${busqueda.toUpperCase()}%`;
+  const estudiantes = db.prepare(`
+    SELECT e.id, e.rude, e.nombres, e.apellidos, c.id AS curso_id, c.nombre AS curso
+    FROM estudiantes e JOIN cursos c ON c.id = e.curso_id
+    WHERE (UPPER(e.nombres) LIKE ? OR UPPER(e.apellidos) LIKE ? OR UPPER(e.rude) LIKE ?)
+    ${curso_id ? 'AND e.curso_id = ?' : ''}
+    ORDER BY e.apellidos, e.nombres
+    LIMIT 50
+  `).all(...(curso_id ? [patron, patron, patron, curso_id] : [patron, patron, patron]));
+  res.json({ estudiantes });
 }));
 
 // ---------- ESTUDIANTES DEL CURSO DE UNA ASIGNACIÓN ----------
@@ -385,25 +418,50 @@ router.post('/asistencias', asyncHandler(async (req, res) => {
   let guardados = 0;
   const errores = [];
   const upsert = db.prepare(`
-    INSERT INTO asistencias (estudiante_id, fecha, estado) VALUES (?,?,?)
-    ON CONFLICT(estudiante_id, fecha) DO UPDATE SET estado = excluded.estado
+    INSERT INTO asistencias (estudiante_id, fecha, estado, motivo) VALUES (?,?,?,?)
+    ON CONFLICT(estudiante_id, fecha) DO UPDATE SET estado = excluded.estado, motivo = excluded.motivo
   `);
   db.tx(() => {
     for (const reg of registros) {
-      const { estudiante_id, estado } = reg || {};
+      const { estudiante_id, estado, motivo } = reg || {};
       if (!esEnteroPositivo(estudiante_id)) { errores.push({ estudiante_id, error: 'ID inválido' }); continue; }
       if (!estadosValidos.includes(estado)) { errores.push({ estudiante_id, error: 'estado inválido' }); continue; }
+      if (req.usuario.rol === 'asistencia' && !['tarde', 'licencia'].includes(estado)) { errores.push({ estudiante_id, error: 'solo puede registrar atrasos o permisos' }); continue; }
+      if (req.usuario.rol === 'asistencia' && estado === 'licencia' && !String(motivo || '').trim()) { errores.push({ estudiante_id, error: 'el permiso requiere una justificación' }); continue; }
       const est = cursoDelEstudiante(estudiante_id);
       if (!est) { errores.push({ estudiante_id, error: 'estudiante no existe' }); continue; }
       if (req.usuario.rol === 'docente' && !cursosPermitidos.has(est.curso_id)) {
         errores.push({ estudiante_id, error: 'estudiante fuera de sus cursos asignados' });
         continue;
       }
-      upsert.run(estudiante_id, fecha, estado);
+      upsert.run(estudiante_id, fecha, estado, String(motivo || '').trim() || null);
       guardados++;
     }
   });
   res.status(201).json({ guardados, errores });
+}));
+
+router.post('/asistencias/justificacion', upload.single('archivo'), asyncHandler(async (req, res) => {
+  const { estudiante_id, fecha, motivo } = req.body || {};
+  requerirCampos({ estudiante_id, fecha, motivo }, ['estudiante_id', 'fecha', 'motivo']);
+  if (!esEnteroPositivo(estudiante_id)) throw badRequest('estudiante_id inválido');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) throw badRequest('fecha debe tener formato YYYY-MM-DD');
+  const estudiante = cursoDelEstudiante(estudiante_id);
+  if (!estudiante) throw noEncontrado('Estudiante no encontrado');
+  if (req.usuario.rol === 'docente') {
+    const permiso = db.prepare('SELECT id FROM asignaciones WHERE docente_id = ? AND curso_id = ?').get(req.usuario.id, estudiante.curso_id);
+    if (!permiso) throw prohibido('No tiene ese curso asignado');
+  }
+  if (req.usuario.rol !== 'asistencia' && !req.file) throw badRequest('Debe adjuntar un archivo para esta justificación');
+  const actual = db.prepare('SELECT archivo_path FROM asistencias WHERE estudiante_id = ? AND fecha = ?').get(estudiante_id, fecha);
+  const archivo = req.file ? req.file.filename : actual?.archivo_path || null;
+  db.prepare(`
+    INSERT INTO asistencias (estudiante_id, fecha, estado, motivo, archivo_path, nombre_original, mime_type)
+    VALUES (?,?,?,?,?,?,?)
+    ON CONFLICT(estudiante_id, fecha) DO UPDATE SET estado='licencia', motivo=excluded.motivo,
+      archivo_path=excluded.archivo_path, nombre_original=excluded.nombre_original, mime_type=excluded.mime_type
+  `).run(estudiante_id, fecha, 'licencia', String(motivo).trim(), archivo, req.file?.originalname || null, req.file?.mimetype || null);
+  res.status(201).json({ mensaje: 'Justificación guardada correctamente', archivo_adjunto: !!archivo });
 }));
 
 router.get('/asistencias', asyncHandler(async (req, res) => {
@@ -420,6 +478,19 @@ router.get('/asistencias', asyncHandler(async (req, res) => {
     WHERE e.curso_id = ? AND a.fecha = ? ORDER BY e.apellidos, e.nombres
   `).all(curso_id, fecha);
   res.json(datos);
+}));
+
+router.get('/asistencias/curso-global', asyncHandler(async (req, res) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(req.query.fecha || '')) throw badRequest('fecha es obligatoria (YYYY-MM-DD)');
+  res.json(db.prepare('SELECT * FROM asistencias WHERE fecha = ?').all(req.query.fecha));
+}));
+
+router.get('/asistencias/:id/justificacion', asyncHandler(async (req, res) => {
+  const asistencia = db.prepare('SELECT archivo_path, nombre_original, mime_type FROM asistencias WHERE id = ? AND estado = \'licencia\'').get(req.params.id);
+  if (!asistencia || !asistencia.archivo_path) throw noEncontrado('Archivo de justificación no encontrado');
+  const archivo = path.join(UPLOAD_DIR, asistencia.archivo_path);
+  if (!fs.existsSync(archivo)) throw noEncontrado('El archivo ya no existe en el servidor');
+  res.type(asistencia.mime_type || path.extname(archivo)).download(archivo, asistencia.nombre_original || 'justificacion');
 }));
 
 // ---------- OBSERVACIONES ----------

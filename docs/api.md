@@ -18,7 +18,7 @@ Todas las rutas (salvo `POST /api/auth/login`) requieren header:
 Authorization: Bearer <token JWT>
 ```
 
-El token JWT expira en **8 horas**. Roles: `admin`, `docente`, `tutor`, `estudiante`.
+El token JWT expira en **8 horas**. Roles: `admin`, `docente`, `tutor`, `estudiante`, `asistencia` (control de atrasos, permisos y faltas).
 
 ### Credenciales de demostración (después de `npm run seed`)
 
@@ -67,7 +67,8 @@ curl -X POST http://localhost:3000/api/auth/login \
 | PUT | `/api/cursos/:id` | `{nombre?, nivel?, capacidad_max?}` | Actualizado (valida ≤40) |
 | DELETE | `/api/cursos/:id` | — | Elimina el curso |
 | GET | `/api/materias` | — | Lista |
-| POST | `/api/materias` | `{nombre, descripcion?}` | `201`. `409` si el nombre existe. |
+| GET | `/api/materias/catalogo` | — | Lista de materias actualmente registradas |
+| POST | `/api/materias` | `{nombre, descripcion?}` | `201`. Permite nombres libres; `409` si el nombre existe. |
 | PUT | `/api/materias/:id` | `{nombre?, descripcion?}` | Actualizado |
 | DELETE | `/api/materias/:id` | — | Eliminado |
 | GET | `/api/estudiantes` | `?curso_id=` | Lista con curso y username |
@@ -82,6 +83,14 @@ curl -X POST http://localhost:3000/api/auth/login \
 | GET | `/api/vinculos` | `?tutor_id=` | Vínculos tutor–estudiante |
 | POST | `/api/vinculos` | `{tutor_id, estudiante_id}` | `201`. `409` si ya existe. |
 | DELETE | `/api/vinculos/:id` | — | Eliminado |
+| GET | `/api/asistencia/cursos` | — | Cursos de la gestión activa con cantidad de estudiantes y docentes responsables. Rol `asistencia`. |
+| GET | `/api/asistencia/estudiantes` | `?curso_id=` | Lista completa del curso para registrar asistencia. Rol `asistencia`. |
+| GET | `/api/asistencias/curso-global` | `?fecha=YYYY-MM-DD` | Novedades de asistencia de todos los estudiantes para esa fecha. Rol `asistencia`. |
+| POST | `/api/asistencias/justificacion` | multipart: `estudiante_id`, `fecha`, `motivo`, `archivo` | Guarda un permiso con justificación y archivo adjunto. |
+| GET | `/api/asistencias/:id/justificacion` | — | Descarga el archivo adjunto de una justificación. |
+| GET | `/api/admin/notificaciones` | — | Historial de notificaciones enviadas, con destinatario y rol |
+| POST | `/api/admin/notificaciones` | `{titulo, mensaje, tipo?, destino: todos\|rol\|usuario\|curso, rol?, usuario_id?, curso_id?}` | Envía la notificación a todos, un rol, un usuario o docentes/tutores de un curso |
+| DELETE | `/api/admin/notificaciones/:id` | — | Elimina una notificación del historial |
 
 **CSV de importación** (primera fila = encabezados):
 
@@ -106,7 +115,7 @@ Ana,Rojas,2011-08-02,1,2026-1S-999
 | PUT | `/api/tareas/:id` | multipart o JSON (mismos campos) | Actualizada |
 | DELETE | `/api/tareas/:id` | — | Eliminada (borra su archivo) |
 | PUT | `/api/entregas/:id` | `{estado: pendiente\|completada}` | Marca entrega (docente dueño de la tarea) |
-| POST | `/api/asistencias` | `{fecha: YYYY-MM-DD, registros:[{estudiante_id, estado}]}` | `201` `{guardados, errores}`. Upsert por lote; solo estudiantes de cursos asignados. |
+| POST | `/api/asistencias` | `{fecha: YYYY-MM-DD, registros:[{estudiante_id, estado, motivo?}]}` | `201` `{guardados, errores}`. El rol `asistencia` registra solo `tarde` o `licencia`; `licencia` exige `motivo`. |
 | GET | `/api/asistencias` | `?curso_id= &fecha=` | Registro de asistencia de ese día |
 | POST | `/api/observaciones` | `{estudiante_id, asignacion_id?, tipo: academica\|conductual, descripcion}` | `201`. **Notifica a tutores**. |
 | GET | `/api/observaciones` | `?estudiante_id= \| ?curso_id=` | Lista (docente: solo sus cursos) |

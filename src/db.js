@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
-  rol TEXT NOT NULL CHECK (rol IN ('admin','docente','tutor','estudiante')),
+  rol TEXT NOT NULL CHECK (rol IN ('admin','docente','tutor','estudiante','asistencia')),
   nombres TEXT NOT NULL,
   apellidos TEXT NOT NULL,
   email TEXT,
@@ -184,6 +184,57 @@ CREATE INDEX IF NOT EXISTS idx_notificaciones_usuario ON notificaciones(usuario_
 CREATE INDEX IF NOT EXISTS idx_materiales_asignacion ON materiales(asignacion_id);
 `);
 
+// Amplía el CHECK de roles en bases creadas antes del rol de asistencia.
+const esquemaUsuarios = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'usuarios'").get();
+if (esquemaUsuarios && !esquemaUsuarios.sql.includes("'asistencia'")) {
+  db.exec(`
+    PRAGMA foreign_keys = OFF;
+    ALTER TABLE usuarios RENAME TO usuarios_legacy;
+    CREATE TABLE usuarios (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      rol TEXT NOT NULL CHECK (rol IN ('admin','docente','tutor','estudiante','asistencia')),
+      nombres TEXT NOT NULL,
+      apellidos TEXT NOT NULL,
+      email TEXT,
+      telefono TEXT,
+      activo INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    INSERT INTO usuarios (id, username, password_hash, rol, nombres, apellidos, email, telefono, activo, created_at)
+      SELECT id, username, password_hash, rol, nombres, apellidos, email, telefono, activo, created_at FROM usuarios_legacy;
+    DROP TABLE usuarios_legacy;
+    PRAGMA foreign_keys = ON;
+  `);
+}
+
+// Algunas versiones de SQLite actualizan las FKs al renombrar la tabla durante
+// la migración. Mantiene un espejo para que esas referencias sigan válidas.
+const referenciasUsuariosLegado = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND sql LIKE '%usuarios_legacy%'").all();
+if (referenciasUsuariosLegado.length && !db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'usuarios_legacy'").get()) {
+  db.exec(`
+    PRAGMA foreign_keys = OFF;
+    CREATE TABLE usuarios_legacy (
+      id INTEGER PRIMARY KEY,
+      username TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      rol TEXT NOT NULL,
+      nombres TEXT NOT NULL,
+      apellidos TEXT NOT NULL,
+      email TEXT,
+      telefono TEXT,
+      activo INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    );
+    INSERT INTO usuarios_legacy SELECT id, username, password_hash, rol, nombres, apellidos, email, telefono, activo, created_at FROM usuarios;
+    CREATE TRIGGER usuarios_espejo_insert AFTER INSERT ON usuarios BEGIN INSERT OR REPLACE INTO usuarios_legacy SELECT NEW.id, NEW.username, NEW.password_hash, NEW.rol, NEW.nombres, NEW.apellidos, NEW.email, NEW.telefono, NEW.activo, NEW.created_at; END;
+    CREATE TRIGGER usuarios_espejo_update AFTER UPDATE ON usuarios BEGIN UPDATE usuarios_legacy SET username=NEW.username, password_hash=NEW.password_hash, rol=NEW.rol, nombres=NEW.nombres, apellidos=NEW.apellidos, email=NEW.email, telefono=NEW.telefono, activo=NEW.activo, created_at=NEW.created_at WHERE id=NEW.id; END;
+    CREATE TRIGGER usuarios_espejo_delete AFTER DELETE ON usuarios BEGIN DELETE FROM usuarios_legacy WHERE id=OLD.id; END;
+    PRAGMA foreign_keys = ON;
+  `);
+}
+
 // Migraciones pequeñas para bases creadas con versiones anteriores.
 const columnasEntregas = db.prepare('PRAGMA table_info(entregas)').all().map((columna) => columna.name);
 if (!columnasEntregas.includes('revisada')) db.exec('ALTER TABLE entregas ADD COLUMN revisada INTEGER NOT NULL DEFAULT 0');
@@ -197,6 +248,11 @@ if (!columnasEntregas.includes('archivo_size')) db.exec('ALTER TABLE entregas AD
 if (!columnasEntregas.includes('comentario_estudiante')) db.exec('ALTER TABLE entregas ADD COLUMN comentario_estudiante TEXT');
 if (!columnasEntregas.includes('enviada_at')) db.exec('ALTER TABLE entregas ADD COLUMN enviada_at TEXT');
 if (!columnasEntregas.includes('es_tardia')) db.exec('ALTER TABLE entregas ADD COLUMN es_tardia INTEGER NOT NULL DEFAULT 0');
+const columnasAsistencias = db.prepare('PRAGMA table_info(asistencias)').all().map((columna) => columna.name);
+if (!columnasAsistencias.includes('motivo')) db.exec('ALTER TABLE asistencias ADD COLUMN motivo TEXT');
+if (!columnasAsistencias.includes('archivo_path')) db.exec('ALTER TABLE asistencias ADD COLUMN archivo_path TEXT');
+if (!columnasAsistencias.includes('nombre_original')) db.exec('ALTER TABLE asistencias ADD COLUMN nombre_original TEXT');
+if (!columnasAsistencias.includes('mime_type')) db.exec('ALTER TABLE asistencias ADD COLUMN mime_type TEXT');
 
 const columnasTareas = db.prepare('PRAGMA table_info(tareas)').all().map((columna) => columna.name);
 if (!columnasTareas.includes('trimestre')) db.exec('ALTER TABLE tareas ADD COLUMN trimestre INTEGER NOT NULL DEFAULT 1 CHECK (trimestre BETWEEN 1 AND 3)');
