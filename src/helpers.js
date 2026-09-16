@@ -10,10 +10,13 @@ const ESCALA = [
 ];
 
 // Observación: el brief escribe "Dominga" (90-100). Se usa el término oficial "Domina".
-const MAX_NOTAS = { ser: 20, saber: 40, hacer: 30, decidir: 10 };
+const MAX_NOTAS = { ser: 10, saber: 45, hacer: 40, decidir: 5 };
+// El componente DECIDIR (5 pts.) corresponde a la autoevaluación del estudiante.
+const COMPONENTES = { ser: 'Ser', saber: 'Saber', hacer: 'Hacer', decidir: 'Autoevaluación' };
 const UMBRAL_APROBACION = 51;
-const BIMESTRES_POR_GESTION = 4;
-const PUNTOS_APROBACION = UMBRAL_APROBACION * BIMESTRES_POR_GESTION; // 204
+const TRIMESTRES_POR_GESTION = 3;
+const BIMESTRES_POR_GESTION = TRIMESTRES_POR_GESTION;
+const PUNTOS_APROBACION = UMBRAL_APROBACION * TRIMESTRES_POR_GESTION; // 153
 
 function redondear2(n) {
   return Math.round((n + Number.EPSILON) * 100) / 100;
@@ -51,20 +54,19 @@ function aprobado(promedioAnual) {
   return promedioAnual >= UMBRAL_APROBACION;
 }
 
-// Puntos totales faltantes para llegar a 204, repartibles entre bimestres restantes
+// Puntos totales faltantes para llegar a 153 en los trimestres restantes.
+// Con todos los trimestres registrados ya no es posible sumar más: 0 puntos por registrar.
 function puntosNecesarios(bimestres) {
   const registrados = bimestres.filter((b) => b !== null && b !== undefined).map(Number);
-  const faltanBimestres = BIMESTRES_POR_GESTION - registrados.length;
-  if (faltanBimestres === 0) {
-    return promedioAnual(bimestres) >= UMBRAL_APROBACION ? 0 : 0;
-  }
+  const faltanTrimestres = TRIMESTRES_POR_GESTION - registrados.length;
+  if (faltanTrimestres === 0) return 0;
   const suma = registrados.reduce((a, b) => a + b, 0);
   return redondear2(Math.max(0, PUNTOS_APROBACION - suma));
 }
 
 function porcentajeBimestresRegistrados(bimestres) {
   const n = bimestres.filter((b) => b !== null && b !== undefined).length;
-  return Math.round((n / BIMESTRES_POR_GESTION) * 100);
+  return Math.round((n / TRIMESTRES_POR_GESTION) * 100);
 }
 
 // Resumen de asistencia
@@ -88,7 +90,9 @@ function resumenAsistencia(asistencias) {
 module.exports = {
   ESCALA,
   MAX_NOTAS,
+  COMPONENTES,
   UMBRAL_APROBACION,
+  TRIMESTRES_POR_GESTION,
   BIMESTRES_POR_GESTION,
   PUNTOS_APROBACION,
   redondear2,

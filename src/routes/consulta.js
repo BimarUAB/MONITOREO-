@@ -46,7 +46,7 @@ function expedienteDe(estudianteId) {
   `).get(estudianteId);
   if (!est) return null;
 
-  // Materias del curso del estudiante (por asignaciones de su gestión) + notas de 4 bimestres
+  // Materias del curso del estudiante (por asignaciones de su gestión) + notas de 3 trimestres
   const asignaciones = db.prepare(`
     SELECT a.id AS asignacion_id, m.id AS materia_id, m.nombre AS materia, u.nombres || ' ' || u.apellidos AS docente
     FROM asignaciones a
@@ -67,29 +67,37 @@ function expedienteDe(estudianteId) {
     (notasPorMateria[n.materia_id] = notasPorMateria[n.materia_id] || {})[n.bimestre] = n;
   }
 
-  // Promedio general del curso por materia (gestión del estudiante)
+  // Promedio del curso por materia y bimestre (curso del estudiante; la gestión está en su curso)
   const promediosCurso = db.prepare(`
-    SELECT n.materia_id, AVG(n.ser + n.saber + n.hacer + n.decidir) AS promedio
+    SELECT n.materia_id, n.bimestre, AVG(n.ser + n.saber + n.hacer + n.decidir) AS promedio
     FROM notas n
     JOIN estudiantes e ON e.id = n.estudiante_id
-    JOIN cursos c ON c.id = e.curso_id
-    WHERE c.id = ? AND c.gestion_id = ? AND e.curso_id = ?
-    GROUP BY n.materia_id
-  `).all(est.curso_id, est.gestion_id, est.curso_id);
+    WHERE e.curso_id = ?
+    GROUP BY n.materia_id, n.bimestre
+  `).all(est.curso_id);
   const promedioCursoPorMateria = {};
-  for (const p of promediosCurso) promedioCursoPorMateria[p.materia_id] = Math.round(p.promedio * 100) / 100;
+  for (const p of promediosCurso) {
+    const mapa = (promedioCursoPorMateria[p.materia_id] = promedioCursoPorMateria[p.materia_id] || {});
+    mapa[p.bimestre] = Math.round(p.promedio * 100) / 100;
+  }
+  const promedioGeneralCurso = (materiaId) => {
+    const porBim = promedioCursoPorMateria[materiaId];
+    if (!porBim) return null;
+    const vals = Object.values(porBim);
+    return Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100;
+  };
 
   const materias = asignaciones.map((a) => {
     const porBimestre = [];
     const proms = [];
-    for (let b = 1; b <= 4; b++) {
+    for (let b = 1; b <= 3; b++) {
       const n = (notasPorMateria[a.materia_id] || {})[b];
       if (n) {
         const prom = promedioBimestre(n);
-        porBimestre.push({ bimestre: b, ser: n.ser, saber: n.saber, hacer: n.hacer, decidir: n.decidir, promedio: prom, cualitativo: cualitativo(prom) });
+        porBimestre.push({ bimestre: b, ser: n.ser, saber: n.saber, hacer: n.hacer, decidir: n.decidir, promedio: prom, cualitativo: cualitativo(prom), promedio_curso: promedioCursoPorMateria[a.materia_id]?.[b] ?? null });
         proms.push(prom);
       } else {
-        porBimestre.push({ bimestre: b, ser: null, saber: null, hacer: null, decidir: null, promedio: null, cualitativo: null });
+        porBimestre.push({ bimestre: b, ser: null, saber: null, hacer: null, decidir: null, promedio: null, cualitativo: null, promedio_curso: promedioCursoPorMateria[a.materia_id]?.[b] ?? null });
       }
     }
     const anual = promedioAnual(proms);
@@ -98,22 +106,23 @@ function expedienteDe(estudianteId) {
       materia_id: a.materia_id,
       materia: a.materia,
       docente: a.docente,
-      bimestres: porBimestre,
+      trimestres: porBimestre,
       promedio_anual: anual,
       cualitativo_anual: anual !== null ? cualitativo(anual) : null,
       semaforo: semaforo(anual),
       aprobado: aprobado(anual),
       puntos_necesarios: puntosNecesarios(proms),
       porcentaje_registrado: porcentajeBimestresRegistrados(proms),
-      promedio_curso: promedioCursoPorMateria[a.materia_id] ?? null,
+      promedio_curso: promedioGeneralCurso(a.materia_id),
     };
   });
 
-  // Tareas del estudiante (entregas del curso en la gestión)
+  // Tareas del estudiante (entregas del curso en la gestión); no se expone la ruta interna del archivo
   const tareas = db.prepare(`
         SELECT t.id AS tarea_id, t.titulo, t.descripcion, t.tipo, t.fecha_publicacion, t.fecha_entrega, t.link,
           m.nombre AS materia, en.id AS entrega_id, en.estado, en.fecha_entrega AS fecha_entregada,
-           en.revisada, en.revision_comentario, en.revision_fecha, en.archivo_path,
+           en.revisada, en.revision_comentario, en.revision_fecha,
+           CASE WHEN en.archivo_path IS NOT NULL THEN 1 ELSE 0 END AS tiene_archivo,
            en.nombre_original, en.comentario_estudiante, en.enviada_at, en.es_tardia
     FROM entregas en
     JOIN tareas t ON t.id = en.tarea_id
@@ -278,41 +287,40 @@ router.put('/notificaciones/:id/leer', asyncHandler(async (req, res) => {
   res.json({ mensaje: 'Notificación marcada como leída' });
 }));
 
-// ---------- COMUNICADOS (lectura, según rol) ----------
+router.put('/notificaciones/leer-todas', asyncHandler(async (req, res) => {
+  const r = db.prepare('UPDATE notificaciones SET leida = 1 WHERE usuario_id = ? AND leida = 0').run(req.usuario.id);
+  res.json({ mensaje: 'Notificaciones marcadas como leídas', marcadas: Number(r.changes) });
+}));
+
+// ---------- COMUNICADOS (lectura, filtrado en SQL según rol) ----------
 router.get('/comunicados', asyncHandler(async (req, res) => {
   const u = req.usuario;
-  const filas = db.prepare(`
+  let sql = `
     SELECT cm.id, cm.titulo, cm.mensaje, cm.dirigido_a, cm.curso_id, cm.fecha,
            c.nombre AS curso, au.nombres || ' ' || au.apellidos AS autor
     FROM comunicados cm
     LEFT JOIN cursos c ON c.id = cm.curso_id
     JOIN usuarios au ON au.id = cm.autor_id
-    ORDER BY cm.fecha DESC
-  `).all();
-  const visibles = filas.filter((cm) => {
-    if (u.rol === 'admin') return true;
-    if (u.rol === 'docente') return cm.dirigido_a === 'todos' || cm.dirigido_a === 'docentes';
-    if (u.rol === 'tutor') {
-      if (cm.dirigido_a === 'todos' && !cm.curso_id) return true;
-      if (cm.dirigido_a === 'padres' || (cm.dirigido_a === 'todos' && cm.curso_id)) {
-        if (!cm.curso_id) return cm.dirigido_a === 'padres';
-        const hijo = db.prepare(`
-          SELECT te.id FROM tutor_estudiante te JOIN estudiantes e ON e.id = te.estudiante_id
-          WHERE te.tutor_id = ? AND e.curso_id = ?
-        `).get(u.id, cm.curso_id);
-        return !!hijo;
-      }
-      return false;
-    }
-    if (u.rol === 'estudiante') {
-      if (cm.dirigido_a !== 'todos') return false;
-      if (!cm.curso_id) return true;
-      const est = estudianteDeUsuario(u.id);
-      return est && est.curso_id === cm.curso_id;
-    }
-    return false;
-  });
-  res.json(visibles);
+  `;
+  const cond = [];
+  const params = [];
+  if (u.rol === 'docente') {
+    cond.push("cm.dirigido_a IN ('todos','docentes')");
+  } else if (u.rol === 'tutor') {
+    cond.push("cm.dirigido_a IN ('todos','padres')");
+    cond.push(`(cm.curso_id IS NULL OR EXISTS (
+      SELECT 1 FROM tutor_estudiante te JOIN estudiantes e ON e.id = te.estudiante_id
+      WHERE te.tutor_id = ? AND e.curso_id = cm.curso_id))`);
+    params.push(u.id);
+  } else if (u.rol === 'estudiante') {
+    cond.push("cm.dirigido_a = 'todos'");
+    cond.push('(cm.curso_id IS NULL OR cm.curso_id = (SELECT curso_id FROM estudiantes WHERE usuario_id = ?))');
+    params.push(u.id);
+  }
+  // admin: sin restricciones
+  if (cond.length) sql += ' WHERE ' + cond.join(' AND ');
+  sql += ' ORDER BY cm.fecha DESC';
+  res.json(db.prepare(sql).all(...params));
 }));
 
 module.exports = router;

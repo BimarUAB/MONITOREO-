@@ -27,6 +27,7 @@ app.use('/api/auth', require('./src/routes/auth'));
 
 // Rutas protegidas
 app.use('/api', autenticar, require('./src/routes/admin'));
+app.use('/api', autenticar, require('./src/routes/gestiones'));
 app.use('/api', autenticar, require('./src/routes/estudiantes'));
 app.use('/api', autenticar, require('./src/routes/asignaciones'));
 app.use('/api', autenticar, require('./src/routes/consulta'));
@@ -42,7 +43,13 @@ app.get('/api/backup', autenticar, requireRole('admin'), asyncHandler(async (req
 // SPA estática desde public/ (si existe)
 const PUBLIC_DIR = path.join(__dirname, 'public');
 if (fs.existsSync(PUBLIC_DIR)) {
-  app.use(express.static(PUBLIC_DIR));
+  app.use(express.static(PUBLIC_DIR, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.html') || filePath.endsWith('.js')) {
+        res.setHeader('Cache-Control', 'no-store');
+      }
+    },
+  }));
 }
 
 // 404 para rutas API desconocidas

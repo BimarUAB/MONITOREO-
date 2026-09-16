@@ -11,6 +11,8 @@ const esc = (value = '') => String(value).replace(/[&<>"']/g, (char) => ({ '&': 
 const fecha = (value) => value ? new Intl.DateTimeFormat('es-BO', { dateStyle: 'medium' }).format(new Date(`${String(value).replace(' ', 'T')}${String(value).length === 10 ? 'T12:00:00' : ''}`)) : 'Sin fecha';
 const rolLabel = { admin: 'Administración', docente: 'Docente', tutor: 'Familia', estudiante: 'Estudiante' };
 const tipoLabel = { tarea: 'Tarea', actividad: 'Actividad', trabajo_practico: 'Trabajo práctico', examen: 'Examen' };
+// Componentes de evaluación (resolución CEI): Ser /10, Saber /45, Hacer /40, Autoevaluación /5.
+const COMPONENTES = [['ser', 'Ser', 10], ['saber', 'Saber', 45], ['hacer', 'Hacer', 40], ['decidir', 'Autoevaluación', 5]];
 
 function mostrarError(error) {
   const mensaje = error?.message || 'No se pudo completar la operación';
@@ -72,7 +74,7 @@ function renderLogin() {
   $('#view').innerHTML = `
     <section class="login-wrap">
       <div class="login-card">
-        <div class="login-escudo" aria-hidden="true"><svg viewBox="0 0 64 64" width="52" height="52"><path d="M32 5 39 21l17 2-13 11 4 17-15-9-15 9 4-17L8 23l17-2z" fill="#f4b41a"/><circle cx="32" cy="30" r="7" fill="#fff"/></svg></div>
+        <div class="login-escudo" aria-hidden="true"><img src="img/logo.png" alt="Escudo UE Jesús María Fe y Alegría" /></div>
         <h1 class="login-titulo">Unidad Educativa<br>“JESÚS MARÍA FE Y ALEGRÍA”</h1>
         <p class="login-sub">El Alto, La Paz · Bolivia</p>
         <div class="login-bienvenida">Consulta el avance escolar de forma segura, desde donde estés.</div>
@@ -114,11 +116,12 @@ async function toggleNotifications() {
   if (!panel.hidden) { panel.hidden = true; return; }
   try {
     const result = await api('/notificaciones');
-    panel.innerHTML = `<div class="notif-head"><h3>Notificaciones</h3><button class="btn btn-sm btn-gris" id="read-notifs">Marcar leídas</button></div>${result.notificaciones.length ? result.notificaciones.map((n) => `<button class="notif-item ${n.leida ? '' : 'no-leida'}" data-notif="${n.id}"><strong>${esc(n.titulo)}</strong><span>${esc(n.mensaje)}</span><small class="notif-fecha">${fecha(n.created_at)}</small></button>`).join('') : empty('No tienes notificaciones nuevas')}`;
+    panel.innerHTML = `<div class="notif-head"><h3>Notificaciones</h3><div class="action-row"><button class="btn btn-sm btn-gris" id="read-notifs">Marcar leídas</button><button class="btn btn-sm btn-outline" id="read-all-notifs">Todas</button></div></div>${result.notificaciones.length ? result.notificaciones.map((n) => `<button class="notif-item ${n.leida ? '' : 'no-leida'}" data-notif="${n.id}"><strong>${esc(n.titulo)}</strong><span>${esc(n.mensaje)}</span><small class="notif-fecha">${fecha(n.created_at)}</small></button>`).join('') : empty('No tienes notificaciones nuevas')}`;
     panel.hidden = false;
     $('#notif-badge').hidden = !result.no_leidas;
     $('#notif-badge').textContent = result.no_leidas;
     $('#read-notifs')?.addEventListener('click', async () => { const ids = result.notificaciones.filter((n) => !n.leida).map((n) => n.id); if (!ids.length) return; await api('/notificaciones/leer', { method: 'PUT', body: JSON.stringify({ ids }) }); panel.hidden = true; toggleNotifications(); });
+    $('#read-all-notifs')?.addEventListener('click', async () => { await api('/notificaciones/leer-todas', { method: 'PUT' }); $('#notif-badge').hidden = true; panel.hidden = true; toggleNotifications(); });
     panel.querySelectorAll('[data-notif]').forEach((item) => item.addEventListener('click', async () => { await api(`/notificaciones/${item.dataset.notif}/leer`, { method: 'PUT' }); item.classList.remove('no-leida'); }));
   } catch (error) { mostrarError(error); }
 }
@@ -127,7 +130,7 @@ function tabs() {
   const items = state.user.rol === 'tutor' || state.user.rol === 'estudiante'
     ? [['inicio', 'home', 'Resumen'], ['notas', 'grades', 'Notas'], ['tareas', 'tasks', 'Tareas'], ['asistencia', 'calendar', 'Asistencia'], ['comunicados', 'notice', 'Avisos']]
     : state.user.rol === 'docente'
-      ? [['inicio', 'home', 'Inicio'], ['clases', 'grades', 'Mis clases'], ['tareas', 'tasks', 'Tareas'], ['comunicados', 'notice', 'Avisos']]
+      ? [['inicio', 'home', 'Inicio'], ['clases', 'grades', 'Mis clases'], ['tareas', 'tasks', 'Tareas'], ['asistencia', 'calendar', 'Asistencia'], ['comunicados', 'notice', 'Avisos']]
       : [['inicio', 'home', 'Inicio'], ['usuarios', 'users', 'Usuarios'], ['estudiantes', 'users', 'Estudiantes'], ['academico', 'grades', 'Académico'], ['cursos', 'calendar', 'Cursos'], ['reportes', 'report', 'Reportes']];
   $('#tabbar').hidden = false;
   $('#tabbar').innerHTML = items.map(([id, ico, label]) => `<button class="tab ${state.view === id ? 'active' : ''}" data-view="${id}"><span>${icon(ico)}</span><small>${label}</small></button>`).join('');
@@ -164,14 +167,14 @@ function familyHome(data) {
   const pending = data.tareas.filter((t) => t.estado === 'pendiente').length;
   return `<div class="student-hero"><div class="avatar">${esc(data.estudiante.nombres[0])}</div><div><h2>${esc(data.estudiante.nombres)} ${esc(data.estudiante.apellidos)}</h2><p>RUDE ${esc(data.estudiante.rude)} · ${esc(data.curso.nombre)}</p></div><div class="hero-score"><strong>${average ?? '—'}</strong><span>promedio anual</span></div></div>
     <div class="stats-grid"><div class="stat"><span class="stat-icon blue">${icon('grades')}</span><strong>${data.materias.length}</strong><small>materias</small></div><div class="stat"><span class="stat-icon yellow">${icon('tasks')}</span><strong>${pending}</strong><small>tareas pendientes</small></div><div class="stat"><span class="stat-icon green">${data.asistencia.porcentaje_asistencia ?? 0}%</span><strong>${data.asistencia.presente}</strong><small>asistencias</small></div></div>
-    <section class="card"><div class="section-heading"><h2>Avance bimestral</h2><button class="text-button" data-action="notas">Ver notas</button></div>${[1, 2, 3, 4].map((b) => { const values = data.materias.map((m) => m.bimestres[b - 1].promedio).filter((n) => n !== null); const avg = values.length ? Math.round(values.reduce((a, n) => a + n, 0) / values.length) : null; return `<div class="progreso"><div class="progreso-info"><span>Bimestre ${b}</span><span>${avg === null ? 'Pendiente' : `${avg}/100`}</span></div><div class="progreso-pista"><div class="progreso-relleno ${semaforo(avg)}" style="width:${avg || 0}%"></div></div></div>`; }).join('')}</section>
+    <section class="card"><div class="section-heading"><h2>Avance trimestral</h2><button class="text-button" data-action="notas">Ver notas</button></div>${[1, 2, 3].map((b) => { const values = data.materias.map((m) => (m.trimestres || m.bimestres)[b - 1]?.promedio).filter((n) => n !== null && n !== undefined); const avg = values.length ? Math.round(values.reduce((a, n) => a + n, 0) / values.length) : null; return `<div class="progreso"><div class="progreso-info"><span>Trimestre ${b}</span><span>${avg === null ? 'Pendiente' : `${avg}/100`}</span></div><div class="progreso-pista"><div class="progreso-relleno ${semaforo(avg)}" style="width:${avg || 0}%"></div></div></div>`; }).join('')}</section>
     <section class="card"><div class="section-heading"><h2>Actividad reciente</h2><button class="text-button" data-action="tareas">Ver tareas</button></div>${data.tareas.slice(0, 3).map(taskRow).join('') || empty('No hay tareas registradas')}</section>
     ${data.observaciones.length ? `<section class="card"><h2 class="card-titulo">Últimas observaciones</h2>${data.observaciones.slice(0, 2).map((o) => `<div class="notice-line"><span class="puntito ${o.tipo === 'conductual' ? 'amarillo' : 'verde'}"></span><div><strong>${esc(o.materia || 'Seguimiento general')}</strong><p>${esc(o.descripcion)}</p><small>${fecha(o.fecha)}</small></div></div>`).join('')}</section>` : ''}`;
 }
 
-function familyGrades(data) { return `<section class="card"><div class="section-heading"><div><h2>Notas por materia</h2><p class="muted">Componentes de evaluación sobre 100 puntos</p></div><span class="tag">${data.materias.length} materias</span></div>${data.materias.map((m) => `<article class="grade-card"><div class="grade-head"><div><h3>${esc(m.materia)}</h3><small>${esc(m.docente)}</small></div><div class="grade-total"><strong>${m.promedio_anual ?? '—'}</strong><span>${m.cualitativo_anual || 'En proceso'}</span></div></div><div class="bimestre-grid">${m.bimestres.map((b) => `<div class="bimestre"><strong>B${b.bimestre}</strong><span>${b.promedio ?? '—'}</span>${b.promedio !== null ? chip(b.promedio, b.cualitativo) : '<em>Sin registro</em>'}</div>`).join('')}</div><div class="grade-foot"><span class="semaforo ${m.semaforo}">${m.aprobado === null ? 'Pendiente' : m.aprobado ? 'Rendimiento favorable' : `${m.puntos_necesarios} pts para aprobar`}</span><span>${m.porcentaje_registrado}% registrado</span></div></article>`).join('')}</section>`; }
+function familyGrades(data) { const trimestres = (m) => m.trimestres || m.bimestres; return `<section class="card"><div class="section-heading"><div><h2>Notas por materia</h2><p class="muted">Componentes de evaluación sobre 100 puntos</p></div><span class="tag">${data.materias.length} materias</span></div>${data.materias.map((m) => `<article class="grade-card"><div class="grade-head"><div><h3>${esc(m.materia)}</h3><small>${esc(m.docente)}</small></div><div class="grade-total"><strong>${m.promedio_anual ?? '—'}</strong><span>${m.cualitativo_anual || 'En proceso'}</span></div></div><div class="bimestre-grid">${trimestres(m).map((b) => `<div class="bimestre"><strong>T${b.bimestre ?? b.trimestre}</strong><span>${b.promedio ?? '—'}</span>${b.promedio !== null ? chip(b.promedio, b.cualitativo) : '<em>Sin registro</em>'}</div>`).join('')}</div><div class="grade-foot"><span class="semaforo ${m.semaforo}">${m.aprobado === null ? 'Pendiente' : m.aprobado ? 'Rendimiento favorable' : `${m.puntos_necesarios} pts para aprobar`}</span><span>${m.porcentaje_registrado}% registrado</span></div></article>`).join('')}</section>`; }
 function taskRow(task) { return `<div class="task-row"><span class="task-check ${task.estado === 'completada' ? 'done' : ''}">${task.estado === 'completada' ? '✓' : ''}</span><div><strong>${esc(task.titulo)}</strong><small>${esc(task.materia)} · ${tipoLabel[task.tipo] || task.tipo}</small></div><time>${task.fecha_entrega ? fecha(task.fecha_entrega) : 'Sin fecha'}</time></div>`; }
-function familyTasks(data) { return `<section class="card"><div class="section-heading"><div><h2>Tareas y actividades</h2><p class="muted">Entrega archivos y consulta la revisión docente de ${esc(data.estudiante.nombres)}</p></div></div>${data.tareas.map((task) => `<div class="task-row interactive"><button class="task-check ${task.estado === 'completada' ? 'done' : ''}" data-action="mark-task" data-task="${task.tarea_id}" data-student="${data.estudiante.id}" data-state="${task.estado}">${task.estado === 'completada' ? '✓' : ''}</button><div><strong>${esc(task.titulo)}</strong><small>${esc(task.materia)} · ${esc(task.descripcion || '')}</small>${task.revision_comentario ? `<p class="task-feedback">Comentario docente: ${esc(task.revision_comentario)}</p>` : ''}<label class="evidence-upload"><span>${task.archivo_path ? 'Reemplazar evidencia' : 'Adjuntar evidencia'}</span><input type="file" data-upload-evidence="${task.entrega_id}" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.zip"></label></div><div class="task-meta"><span class="chip ${task.estado === 'completada' ? 'chip-sobresaliente' : 'chip-bueno'}">${task.estado === 'completada' ? (task.es_tardia ? 'Entregada tarde' : 'Entregada') : 'Pendiente'}</span>${task.estado === 'completada' ? `<span class="review-status ${task.revisada ? 'reviewed' : ''}">${task.revisada ? '✓ Revisada' : 'Pendiente de revisión'}</span>` : ''}<time>${task.fecha_entrega ? fecha(task.fecha_entrega) : 'Sin fecha'}</time></div></div>`).join('') || empty('No hay tareas asignadas')}</section>`; }
+function familyTasks(data) { return `<section class="card"><div class="section-heading"><div><h2>Tareas y actividades</h2><p class="muted">Entrega archivos y consulta la revisión docente de ${esc(data.estudiante.nombres)}</p></div></div>${data.tareas.map((task) => `<div class="task-row interactive"><button class="task-check ${task.estado === 'completada' ? 'done' : ''}" data-action="mark-task" data-task="${task.tarea_id}" data-student="${data.estudiante.id}" data-state="${task.estado}">${task.estado === 'completada' ? '✓' : ''}</button><div><strong>${esc(task.titulo)}</strong><small>${esc(task.materia)} · ${esc(task.descripcion || '')}</small>${task.revision_comentario ? `<p class="task-feedback">Comentario docente: ${esc(task.revision_comentario)}</p>` : ''}<label class="evidence-upload"><span>${task.tiene_archivo ? 'Reemplazar evidencia' : 'Adjuntar evidencia'}</span><input type="file" data-upload-evidence="${task.entrega_id}" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.zip"></label></div><div class="task-meta"><span class="chip ${task.estado === 'completada' ? 'chip-sobresaliente' : 'chip-bueno'}">${task.estado === 'completada' ? (task.es_tardia ? 'Entregada tarde' : 'Entregada') : 'Pendiente'}</span>${task.estado === 'completada' ? `<span class="review-status ${task.revisada ? 'reviewed' : ''}">${task.revisada ? '✓ Revisada' : 'Pendiente de revisión'}</span>` : ''}<time>${task.fecha_entrega ? fecha(task.fecha_entrega) : 'Sin fecha'}</time></div></div>`).join('') || empty('No hay tareas asignadas')}</section>`; }
 async function familyNotices() { const notices = await api('/comunicados'); return `<section class="card"><h2 class="card-titulo">Comunicados de la unidad educativa</h2>${notices.map((n) => `<article class="notice-card"><div class="notice-date">${fecha(n.fecha)}</div><h3>${esc(n.titulo)}</h3><p>${esc(n.mensaje)}</p><small>${esc(n.autor)}${n.curso ? ` · ${esc(n.curso)}` : ''}</small></article>`).join('') || empty('No hay comunicados')}</section>`; }
 async function familyAttendance(data) { const result = await api(`/expediente/${data.estudiante.id}/asistencias`); return `<section class="card"><div class="section-heading"><div><h2>Asistencia</h2><p class="muted">Registro completo de ${esc(data.estudiante.nombres)}</p></div><span class="tag">${data.asistencia.porcentaje_asistencia ?? 0}% asistencia</span></div><div class="asistencia-resumen"><div class="asis-caja verde"><strong>${data.asistencia.presente}</strong><span>Presentes</span></div><div class="asis-caja amarillo"><strong>${data.asistencia.tarde}</strong><span>Tardanzas</span></div><div class="asis-caja rojo"><strong>${data.asistencia.ausente}</strong><span>Ausencias</span></div><div class="asis-caja azul"><strong>${data.asistencia.licencia}</strong><span>Licencias</span></div></div>${result.asistencias.map((a) => `<div class="asist-fila"><span class="asist-fecha">${fecha(a.fecha)}</span><span class="semaforo ${a.estado === 'presente' || a.estado === 'licencia' ? 'verde' : a.estado === 'tarde' ? 'amarillo' : 'rojo'}">${a.estado}</span></div>`).join('') || empty('No hay registros de asistencia')}</section>`; }
 
@@ -180,16 +183,63 @@ async function renderTeacher(view) {
   const asignaciones = state.data.asignaciones;
   if (view === 'tareas') return teacherTasks(asignaciones);
   if (view === 'comunicados') return familyNotices();
+  if (view === 'asistencia') return teacherAttendance(asignaciones);
   if (view === 'clases') return teacherClasses(asignaciones);
   const total = asignaciones.reduce((sum, a) => sum + a.total_estudiantes, 0);
-  return `<div class="page-title"><span class="eyebrow">Panel docente</span><h1>Buen día, ${esc(state.user.nombres)}</h1><p>Tu aula digital para acompañar cada proceso de aprendizaje.</p></div><div class="stats-grid"><div class="stat"><span class="stat-icon blue">${icon('grades')}</span><strong>${asignaciones.length}</strong><small>asignaciones</small></div><div class="stat"><span class="stat-icon green">${icon('users')}</span><strong>${total}</strong><small>estudiantes</small></div><div class="stat"><span class="stat-icon yellow">4</span><strong>4</strong><small>bimestres</small></div></div><section class="card"><div class="section-heading"><h2>Mis clases</h2><button class="btn btn-primary btn-sm" data-action="clases">Gestionar</button></div>${asignaciones.slice(0, 4).map(assignmentCard).join('') || empty('No tienes asignaciones activas')}</section>`;
+  const resumen = asignaciones.map((item) => `<article class="teacher-dashboard-card"><div class="section-heading"><div><h3>${esc(item.curso)}</h3><small>${esc(item.materia)} · ${item.total_estudiantes} estudiantes</small></div><button class="btn btn-primary btn-sm" data-assignment="${item.id}">Abrir curso</button></div><div class="task-status-grid"><div><strong>${item.tareas_revisadas || 0}</strong><small>Tareas revisadas</small></div><div><strong>${item.tareas_pendientes || 0}</strong><small>Tareas pendientes</small></div></div></article>`).join('');
+  return `<div class="page-title"><span class="eyebrow">Panel docente</span><h1>Buen día, ${esc(state.user.nombres)}</h1><p>Resumen de tus cursos y seguimiento de tareas.</p></div><div class="stats-grid"><div class="stat"><span class="stat-icon blue">${icon('grades')}</span><strong>${asignaciones.length}</strong><small>asignaciones</small></div><div class="stat"><span class="stat-icon green">${icon('users')}</span><strong>${total}</strong><small>estudiantes</small></div><div class="stat"><span class="stat-icon yellow">3</span><strong>3</strong><small>trimestres</small></div></div><section class="teacher-dashboard"><div class="section-heading"><h2>Mis cursos asignados</h2><button class="btn btn-primary btn-sm" data-action="clases">Ver tabla completa</button></div>${resumen || empty('No tienes cursos asignados')}</section>`;
 }
 function assignmentCard(a) { return `<button class="assignment" data-assignment="${a.id}"><span class="subject-mark">${esc(a.materia[0])}</span><span><strong>${esc(a.materia)}</strong><small>${esc(a.curso)} · ${a.total_estudiantes} estudiantes</small></span><span class="arrow">›</span></button>`; }
-function teacherClasses(asignaciones) { return `<div class="page-title"><span class="eyebrow">Docencia</span><h1>Mis clases</h1><p>Selecciona una asignación para registrar y consultar notas.</p></div><section class="card">${asignaciones.map(assignmentCard).join('') || empty('No tienes asignaciones activas')}</section><div id="class-detail"></div>`; }
+function teacherClasses(asignaciones) { return `<div class="page-title"><span class="eyebrow">Docencia</span><h1>Mis clases</h1><p>Haz clic en un curso para abrir directamente su lista y registrar notas.</p></div><section class="card"><div class="section-heading"><h2>Cursos asignados</h2><span class="tag">${asignaciones.length} clases</span></div><div class="teacher-class-table"><div class="teacher-class-head"><span>Curso</span><span>Materia</span><span>Estudiantes</span><span>Tareas revisadas</span><span>Tareas pendientes</span><span>Acción</span></div>${asignaciones.map((a) => `<button class="teacher-class-row" data-assignment="${a.id}"><strong>${esc(a.curso)}</strong><span>${esc(a.materia)}</span><span>${a.total_estudiantes}</span><span class="task-count reviewed">${a.tareas_revisadas || 0}</span><span class="task-count pending">${a.tareas_pendientes || 0}</span><span class="teacher-class-open">Abrir lista <span class="arrow">›</span></span></button>`).join('') || empty('No hay cursos disponibles para este docente')}</div></section><div id="class-detail"></div>`; }
 async function teacherTasks(asignaciones) {
   const tasks = await api('/tareas');
   state.data.tareas = tasks;
   return `<div class="page-title"><span class="eyebrow">Docencia</span><h1>Tareas publicadas</h1><p>Crea, actualiza, revisa entregas o retira actividades de tus cursos.</p></div><section class="card"><div class="section-heading"><h2>${tasks.length} actividades</h2><button class="btn btn-primary btn-sm" data-action="new-task">Nueva tarea</button></div>${tasks.map((t) => `<article class="managed-task"><div class="task-row"><span class="subject-mark small">${esc(t.materia[0])}</span><div><strong>${esc(t.titulo)}</strong><small>${esc(t.materia)} · ${esc(t.curso)} · ${tipoLabel[t.tipo] || t.tipo} · ${t.entregas.completada} entregadas / ${t.entregas.pendiente} pendientes</small></div><time>${t.fecha_entrega ? fecha(t.fecha_entrega) : 'Sin fecha'}</time></div><div class="managed-task-actions"><button class="btn btn-verde btn-sm" data-review-task="${t.id}">Revisar entregas</button><button class="btn btn-outline btn-sm" data-edit-task="${t.id}">Editar</button><button class="btn btn-rojo btn-sm" data-delete-task="${t.id}">Eliminar</button></div></article>`).join('') || empty('Aún no publicaste tareas')}</section>`;
+}
+
+function teacherAttendance(asignaciones) {
+  const hoy = new Date().toISOString().slice(0, 10);
+  if (!asignaciones.length) return `<div class="page-title"><span class="eyebrow">Docencia</span><h1>Asistencia diaria</h1></div>${empty('No tienes asignaciones activas')}`;
+  return `<div class="page-title"><span class="eyebrow">Docencia</span><h1>Asistencia diaria</h1><p>Registra o corrige la asistencia de tus cursos; los datos se guardan por fecha.</p></div>
+  <section class="card"><div class="section-heading"><h2>Tomar asistencia</h2></div>
+    <div class="form-grid"><div class="campo"><label>Clase</label><select id="att-class">${asignaciones.map((a) => `<option value="${a.id}">${esc(a.materia)} · ${esc(a.curso)}</option>`).join('')}</select></div>
+    <div class="campo"><label>Fecha</label><input id="att-date" type="date" value="${hoy}"></div></div>
+    <div id="att-list">${loading('Cargando estudiantes...')}</div>
+    <div class="action-row" style="margin-top:10px"><button class="btn btn-primary" id="att-save">Guardar asistencia</button><span class="muted" id="att-hint"></span></div>
+  </section>`;
+}
+
+async function initAttendance() {
+  const cargar = async () => {
+    const asigId = Number($('#att-class').value);
+    const fechaSel = $('#att-date').value;
+    const asig = (state.data.asignaciones || []).find((a) => a.id === asigId);
+    if (!asig || !fechaSel) return;
+    try {
+      const [estData, asistData] = await Promise.all([
+        api(`/docente/estudiantes?asignacion_id=${asigId}`),
+        api(`/asistencias?curso_id=${asig.curso_id}&fecha=${fechaSel}`),
+      ]);
+      const prev = {}; for (const a of asistData) prev[a.estudiante_id] = a.estado;
+      state.data.attStudents = estData.estudiantes;
+      $('#att-hint').textContent = asistData.length ? `Ya existe registro del ${fechaSel}: se sobreescribirá.` : '';
+      $('#att-list').innerHTML = estData.estudiantes.map((e) => `<div class="att-row"><strong>${esc(e.apellidos)}, ${esc(e.nombres)}</strong><div class="att-options">${['presente', 'tarde', 'ausente', 'licencia'].map((est) => `<label class="att-opt"><input type="radio" name="att-${e.id}" value="${est}" ${(prev[e.id] || 'presente') === est ? 'checked' : ''}>${est}</label>`).join('')}</div></div>`).join('') || empty('No hay estudiantes en este curso');
+    } catch (error) { $('#att-list').innerHTML = `<div class="card"><p>${esc(error.message)}</p></div>`; }
+  };
+  $('#att-class').addEventListener('change', cargar);
+  $('#att-date').addEventListener('change', cargar);
+  $('#att-save').addEventListener('click', async () => {
+    const fechaSel = $('#att-date').value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaSel)) { mostrarError(new Error('Selecciona una fecha válida')); return; }
+    const registros = (state.data.attStudents || []).map((e) => ({ estudiante_id: e.id, estado: $(`input[name="att-${e.id}"]:checked`)?.value || 'presente' }));
+    if (!registros.length) return;
+    try {
+      const r = await api('/asistencias', { method: 'POST', body: JSON.stringify({ fecha: fechaSel, registros }) });
+      $('#att-hint').textContent = '';
+      showToast(`Asistencia del ${fechaSel} guardada (${r.guardados} registros)`, 'ok');
+    } catch (error) { mostrarError(error); }
+  });
+  await cargar();
 }
 
 async function renderAdmin(view) {
@@ -202,38 +252,114 @@ async function renderAdmin(view) {
   state.data.users = users; state.data.courses = courses; state.data.subjects = subjects;
   return `<div class="page-title"><span class="eyebrow">Dirección</span><h1>Vista general del sistema</h1><p>Gestión académica de la unidad educativa · ${new Date().getFullYear()}</p></div><div class="stats-grid"><div class="stat"><span class="stat-icon blue">${icon('users')}</span><strong>${users.length}</strong><small>usuarios</small></div><div class="stat"><span class="stat-icon green">${courses.length}</span><strong>${courses.reduce((n, c) => n + c.total_estudiantes, 0)}</strong><small>estudiantes</small></div><div class="stat"><span class="stat-icon yellow">${subjects.length}</span><strong>${subjects.length}</strong><small>materias activas</small></div></div><section class="card"><div class="section-heading"><h2>Acciones rápidas</h2></div><div class="quick-grid"><button class="quick-action" data-action="usuarios">${icon('users')}<strong>Usuarios</strong><small>Familias y docentes</small></button><button class="quick-action" data-action="cursos">${icon('calendar')}<strong>Cursos</strong><small>Capacidad y gestión</small></button><button class="quick-action" data-action="reportes">${icon('report')}<strong>Reportes</strong><small>Rendimiento académico</small></button></div></section>`;
 }
-async function adminUsers() { const users = state.data.users || await api('/usuarios'); state.data.users = users; return `<div class="page-title"><span class="eyebrow">Administración</span><h1>Usuarios del sistema</h1><p>Administra el acceso de cada integrante de la comunidad educativa.</p></div><section class="card"><div class="section-heading"><h2>${users.length} cuentas registradas</h2><button class="btn btn-primary btn-sm" data-action="new-user">Nuevo usuario</button></div><div class="table-wrap"><table><thead><tr><th>Persona</th><th>Rol</th><th>Contacto</th><th>Estado</th></tr></thead><tbody>${users.map((u) => `<tr><td><strong>${esc(u.nombres)} ${esc(u.apellidos)}</strong><small>@${esc(u.username)}</small></td><td><span class="tag">${rolLabel[u.rol]}</span></td><td>${esc(u.email || 'Sin correo')}</td><td><span class="semaforo ${u.activo ? 'verde' : 'rojo'}">${u.activo ? 'Activo' : 'Inactivo'}</span></td></tr>`).join('')}</tbody></table></div></section>`; }
-async function adminStudents() { const students = await api('/estudiantes'); const courses = state.data.courses || await api('/cursos'); state.data.courses = courses; return `<div class="page-title"><span class="eyebrow">Administración</span><h1>Estudiantes matriculados</h1><p>Controla RUDE, curso y capacidad de la gestión activa.</p></div><section class="card"><div class="section-heading"><h2>${students.length} estudiantes</h2><div class="action-row"><button class="btn btn-outline btn-sm" data-action="export-students">Exportar CSV</button><button class="btn btn-primary btn-sm" data-action="new-student">Nuevo estudiante</button></div></div><div class="table-wrap"><table><thead><tr><th>Estudiante</th><th>RUDE</th><th>Curso</th><th>Cuenta</th></tr></thead><tbody>${students.map((s) => `<tr><td><strong>${esc(s.apellidos)}, ${esc(s.nombres)}</strong><small>${s.fecha_nacimiento || 'Sin fecha de nacimiento'}</small></td><td>${esc(s.rude)}</td><td><span class="tag">${esc(s.curso)}</span></td><td>${s.username ? `@${esc(s.username)}` : '<span class="muted">Sin cuenta</span>'}</td></tr>`).join('')}</tbody></table></div></section>`; }
+function userRow(u) {
+  return `<tr><td><strong>${esc(u.nombres)} ${esc(u.apellidos)}</strong><small>@${esc(u.username)}</small></td><td><span class="tag">${rolLabel[u.rol]}</span></td><td>${esc(u.email || 'Sin correo')}</td><td><span class="semaforo ${u.activo ? 'verde' : 'rojo'}">${u.activo ? 'Activo' : 'Inactivo'}</span></td><td><div class="action-row"><button class="btn btn-outline btn-sm" data-edit-user="${u.id}">Editar</button>${u.id !== state.user.id ? (u.activo ? `<button class="btn btn-rojo btn-sm" data-toggle-user="${u.id}" data-activar="0">Desactivar</button>` : `<button class="btn btn-verde btn-sm" data-toggle-user="${u.id}" data-activar="1">Activar</button>`) : ''}</div></td></tr>`;
+}
+async function adminUsers() {
+  const users = state.data.users || await api('/usuarios');
+  state.data.users = users;
+  return `<div class="page-title"><span class="eyebrow">Administración</span><h1>Usuarios del sistema</h1><p>Administra el acceso de cada integrante de la comunidad educativa.</p></div><section class="card"><div class="section-heading"><h2>${users.length} cuentas registradas</h2><button class="btn btn-primary btn-sm" data-action="new-user">Nuevo usuario</button></div><input id="user-search" class="search-input" placeholder="Buscar por nombre o usuario..."><div class="table-wrap"><table><thead><tr><th>Persona</th><th>Rol</th><th>Contacto</th><th>Estado</th><th>Acciones</th></tr></thead><tbody id="users-tbody">${users.map(userRow).join('')}</tbody></table></div></section>`;
+}
+function studentRow(s) { return `<tr><td><strong>${esc(s.apellidos)}, ${esc(s.nombres)}</strong><small>${s.fecha_nacimiento || 'Sin fecha de nacimiento'}</small></td><td>${esc(s.rude)}</td><td><span class="tag">${esc(s.curso)}</span></td><td>${s.username ? `@${esc(s.username)}` : '<span class="muted">Sin cuenta</span>'}</td></tr>`; }
+async function adminStudents() {
+  const students = await api('/estudiantes');
+  state.data.students = students;
+  const courses = state.data.courses || await api('/cursos'); state.data.courses = courses;
+  return `<div class="page-title"><span class="eyebrow">Administración</span><h1>Estudiantes matriculados</h1><p>Controla RUDE, curso y capacidad de la gestión activa.</p></div><section class="card"><div class="section-heading"><h2>${students.length} estudiantes</h2><div class="action-row"><button class="btn btn-outline btn-sm" data-action="export-students">Exportar CSV</button><button class="btn btn-primary btn-sm" data-action="new-student">Nuevo estudiante</button></div></div><input id="student-search" class="search-input" placeholder="Buscar por nombre, apellido o RUDE..."><div class="table-wrap"><table><thead><tr><th>Estudiante</th><th>RUDE</th><th>Curso</th><th>Cuenta</th></tr></thead><tbody id="students-tbody">${students.map(studentRow).join('')}</tbody></table></div></section>`;
+}
 async function adminAcademic() { const [assignments, subjects, users, courses] = await Promise.all([api('/asignaciones'), api('/materias'), api('/usuarios?rol=docente'), api('/cursos')]); state.data.courses = courses; state.data.asignacionesAdmin = assignments; state.data.subjects = subjects; state.data.docentes = users; return `<div class="page-title"><span class="eyebrow">Administración académica</span><h1>Materias y asignaciones</h1><p>Define quién enseña cada materia en cada curso.</p></div><section class="card"><div class="section-heading"><h2>Asignaciones docentes</h2><button class="btn btn-primary btn-sm" data-action="new-assignment">Nueva asignación</button></div>${assignments.map((a) => `<div class="assignment"><span class="subject-mark">${esc(a.materia[0])}</span><span><strong>${esc(a.materia)}</strong><small>${esc(a.curso)} · ${esc(a.docente)}</small></span><span class="tag">${a.gestion_anio}</span></div>`).join('') || empty('No hay asignaciones')}</section><section class="card"><div class="section-heading"><h2>${subjects.length} materias configuradas</h2><button class="btn btn-outline btn-sm" data-action="new-subject">Agregar materia</button></div><div class="chip-list">${subjects.map((s) => `<span class="tag">${esc(s.nombre)}</span>`).join('')}</div></section>`; }
-async function adminCourses() { const courses = state.data.courses || await api('/cursos'); state.data.courses = courses; return `<div class="page-title"><span class="eyebrow">Administración</span><h1>Cursos y capacidad</h1><p>Nivel Secundaria · máximo 40 estudiantes por curso.</p></div><section class="card"><div class="section-heading"><h2>Gestión 2026</h2><button class="btn btn-primary btn-sm" data-action="new-course">Nuevo curso</button></div>${courses.map((c) => `<div class="course-row"><div><strong>${esc(c.nombre)}</strong><small>${c.total_estudiantes}/${c.capacidad_max} estudiantes · ${c.nivel}</small></div><div class="course-progress"><div><span style="width:${Math.min(100, c.total_estudiantes / c.capacidad_max * 100)}%"></span></div><small>${Math.round(c.total_estudiantes / c.capacidad_max * 100)}%</small></div></div>`).join('')}</section>`; }
-async function adminReports() { const courses = state.data.courses || await api('/cursos'); state.data.courses = courses; const reports = await Promise.all(courses.map(async (course) => ({ course, risk: await api(`/reportes/riesgo?curso_id=${course.id}`), performance: await api(`/reportes/rendimiento?curso_id=${course.id}`) }))); return `<div class="page-title"><span class="eyebrow">Administración</span><h1>Reportes académicos</h1><p>Rendimiento, asistencia académica y estudiantes que requieren apoyo.</p></div>${reports.map(({ course, risk, performance }) => `<section class="card report-course"><div class="section-heading"><div><h2>${esc(course.nombre)}</h2><p class="muted">${risk.estudiantes.length} estudiantes en riesgo · bimestre ${risk.bimestre_actual || 'sin datos'}</p></div><span class="tag">${course.total_estudiantes} estudiantes</span></div>${risk.estudiantes.length ? risk.estudiantes.map((item) => `<div class="notice-line"><span class="puntito rojo"></span><div><strong>${esc(item.estudiante.nombres)} ${esc(item.estudiante.apellidos)}</strong><p>${item.materias_en_riesgo.map((m) => `${esc(m.materia)} (${m.promedio_anual ?? '—'})`).join(' · ')}</p></div></div>`).join('') : empty('No hay estudiantes en riesgo registrados')}<div class="report-subjects">${performance.materias.map((m) => `<div><span>${esc(m.materia)}</span><strong>${m.promedio_curso ?? '—'}</strong><small>${m.en_riesgo} en riesgo</small></div>`).join('')}</div></section>`).join('') || empty('No hay cursos configurados')}`; }
+function courseRow(c) { return `<div class="course-row"><div><strong>${esc(c.nombre)}</strong><small>${c.total_estudiantes}/${c.capacidad_max} estudiantes · ${c.nivel} · Gestión ${c.gestion}</small></div><div class="course-progress"><div><span style="width:${Math.min(100, c.total_estudiantes / c.capacidad_max * 100)}%"></span></div><small>${Math.round(c.total_estudiantes / c.capacidad_max * 100)}%</small></div></div>`; }
+async function adminCourses() {
+  const [courses, gestiones] = await Promise.all([api('/cursos'), api('/gestiones')]);
+  state.data.courses = courses; state.data.gestiones = gestiones;
+  const activa = gestiones.find((g) => g.activa);
+  return `<div class="page-title"><span class="eyebrow">Administración</span><h1>Cursos y gestiones</h1><p>Gestión activa: ${activa ? activa.anio : 'ninguna'} · máximo 40 estudiantes por curso.</p></div>
+  <section class="card"><div class="section-heading"><h2>Gestiones académicas</h2></div>${gestiones.map((g) => `<div class="course-row"><div><strong>Gestión ${g.anio}</strong><small>${g.total_cursos} cursos · ${g.activa ? 'activa' : 'inactiva'}</small></div><div class="action-row">${g.activa ? '<span class="tag">Activa</span>' : `<button class="btn btn-verde btn-sm" data-gestion-activar="${g.id}">Activar</button>`}</div></div>`).join('') || empty('No hay gestiones registradas')}<form id="gestion-form" class="form-inline"><div class="campo"><label>Nueva gestión</label><input name="anio" type="number" min="2000" max="2100" placeholder="Año, ej. 2027" required></div><button class="btn btn-primary btn-sm">Crear gestión</button></form></section>
+  <section class="card"><div class="section-heading"><h2>Cursos</h2><button class="btn btn-primary btn-sm" data-action="new-course">Nuevo curso</button></div>${courses.map(courseRow).join('') || empty('No hay cursos creados')}</section>`;
+}
+async function adminReports() { const courses = state.data.courses || await api('/cursos'); state.data.courses = courses; const reports = await Promise.all(courses.map(async (course) => ({ course, risk: await api(`/reportes/riesgo?curso_id=${course.id}`), performance: await api(`/reportes/rendimiento?curso_id=${course.id}`) }))); return `<div class="page-title"><span class="eyebrow">Administración</span><h1>Reportes académicos</h1><p>Rendimiento, asistencia académica y estudiantes que requieren apoyo.</p></div>${reports.map(({ course, risk, performance }) => `<section class="card report-course"><div class="section-heading"><div><h2>${esc(course.nombre)}</h2><p class="muted">${risk.estudiantes.length} estudiantes en riesgo · trimestre ${risk.trimestre_actual || 'sin datos'}</p></div><span class="tag">${course.total_estudiantes} estudiantes</span></div>${risk.estudiantes.length ? risk.estudiantes.map((item) => `<div class="notice-line"><span class="puntito rojo"></span><div><strong>${esc(item.estudiante.nombres)} ${esc(item.estudiante.apellidos)}</strong><p>${item.materias_en_riesgo.map((m) => `${esc(m.materia)} (${m.promedio_anual ?? '—'})`).join(' · ')}</p></div></div>`).join('') : empty('No hay estudiantes en riesgo registrados')}<div class="report-subjects">${performance.materias.map((m) => `<div><span>${esc(m.materia)}</span><strong>${m.promedio_curso ?? '—'}</strong><small>${m.en_riesgo} en riesgo</small></div>`).join('')}</div></section>`).join('') || empty('No hay cursos configurados')}`; }
 
 function bindActions() {
-  document.querySelectorAll('[data-action]').forEach((element) => element.onclick = () => navigate(element.dataset.action));
+  document.querySelectorAll('[data-action]:not([data-action="new-task"])').forEach((element) => element.onclick = () => navigate(element.dataset.action));
   document.querySelectorAll('[data-assignment]').forEach((element) => element.onclick = () => showAssignment(Number(element.dataset.assignment)));
+  document.querySelector('#teacher-open-class')?.addEventListener('click', () => {
+    const assignmentId = Number(document.querySelector('#teacher-class-select')?.value);
+    if (assignmentId) showAssignment(assignmentId);
+  });
   document.querySelectorAll('[data-action="mark-task"]').forEach((element) => element.onclick = async (event) => {
     event.stopPropagation();
     const next = element.dataset.state === 'completada' ? 'pendiente' : 'completada';
     try { await api('/entregas/marcar', { method: 'PUT', body: JSON.stringify({ tarea_id: Number(element.dataset.task), estudiante_id: Number(element.dataset.student), estado: next }) }); state.data.expedientes = {}; await navigate('tareas'); } catch (error) { mostrarError(error); }
   });
   document.querySelectorAll('[data-upload-evidence]').forEach((input) => input.onchange = () => uploadEvidence(input));
-  document.querySelector('[data-action="new-user"]')?.addEventListener('click', showUserForm);
+  document.querySelector('[data-action="new-user"]')?.addEventListener('click', () => showUserForm());
   document.querySelector('[data-action="new-course"]')?.addEventListener('click', showCourseForm);
-  document.querySelector('[data-action="new-task"]')?.addEventListener('click', showTaskForm);
+  document.querySelector('[data-action="new-task"]')?.addEventListener('click', () => showTaskForm().catch((error) => mostrarError(error)));
   document.querySelector('[data-action="new-student"]')?.addEventListener('click', showStudentForm);
   document.querySelector('[data-action="new-assignment"]')?.addEventListener('click', showAssignmentForm);
   document.querySelector('[data-action="new-subject"]')?.addEventListener('click', showSubjectForm);
   document.querySelector('[data-action="export-students"]')?.addEventListener('click', exportStudents);
   document.querySelectorAll('[data-edit-task]').forEach((element) => element.onclick = () => {
-    const task = state.data.tareas?.find((item) => item.id === Number(element.dataset.editTask));
-    if (task) showTaskForm(task);
+    const taskId = Number(element.dataset.editTask);
+    api('/tareas').then((tasks) => {
+      state.data.tareas = tasks;
+      const task = tasks.find((item) => item.id === taskId);
+      if (task) {
+        showTaskForm(task).catch((error) => mostrarError(error));
+      } else {
+        showToast('La tarea ya no existe. Se actualizó la lista.', 'info');
+        navigate('tareas');
+      }
+    }).catch((error) => mostrarError(error));
   });
   document.querySelectorAll('[data-delete-task]').forEach((element) => element.onclick = async () => {
     if (!window.confirm('¿Deseas eliminar esta tarea? También se eliminarán sus entregas asociadas.')) return;
     try { await api(`/tareas/${element.dataset.deleteTask}`, { method: 'DELETE' }); await navigate('tareas'); showToast('Tarea eliminada correctamente', 'ok'); } catch (error) { mostrarError(error); }
   });
   document.querySelectorAll('[data-review-task]').forEach((element) => element.onclick = () => showReviewForm(Number(element.dataset.reviewTask)));
+  // Gestiones académicas (admin)
+  document.querySelectorAll('[data-gestion-activar]').forEach((element) => element.onclick = async () => {
+    try { await api(`/gestiones/${element.dataset.gestionActivar}/activar`, { method: 'PUT' }); state.data.courses = null; state.data.gestiones = null; await navigate('cursos'); showToast('Gestión activada correctamente', 'ok'); } catch (error) { mostrarError(error); }
+  });
+  $('#gestion-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try { await api('/gestiones', { method: 'POST', body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); state.data.gestiones = null; await navigate('cursos'); showToast('Gestión creada correctamente', 'ok'); } catch (error) { mostrarError(error); }
+  });
+  // Usuarios (admin): edición, activación y búsqueda
+  bindUserButtons();
+  $('#user-search')?.addEventListener('input', (event) => {
+    const q = event.target.value.trim().toLowerCase();
+    const lista = (state.data.users || []).filter((u) => !q || `${u.nombres} ${u.apellidos} ${u.username}`.toLowerCase().includes(q));
+    $('#users-tbody').innerHTML = lista.map(userRow).join('') || '<tr><td colspan="5">Sin resultados para la búsqueda.</td></tr>';
+    bindUserButtons();
+  });
+  // Estudiantes (admin): búsqueda
+  $('#student-search')?.addEventListener('input', (event) => {
+    const q = event.target.value.trim().toLowerCase();
+    const lista = (state.data.students || []).filter((s) => !q || `${s.nombres} ${s.apellidos} ${s.rude}`.toLowerCase().includes(q));
+    $('#students-tbody').innerHTML = lista.map(studentRow).join('') || '<tr><td colspan="4">Sin resultados para la búsqueda.</td></tr>';
+  });
+  // Asistencia docente
+  if ($('#att-class')) initAttendance();
   $('#child-select')?.addEventListener('change', (event) => { state.data.selectedChild = Number(event.target.value); state.data.expedientes = {}; navigate(state.view); });
+}
+
+function bindUserButtons() {
+  document.querySelectorAll('[data-edit-user]').forEach((element) => element.onclick = () => {
+    const u = (state.data.users || []).find((x) => x.id === Number(element.dataset.editUser));
+    if (u) showUserForm(u);
+  });
+  document.querySelectorAll('[data-toggle-user]').forEach((element) => element.onclick = async () => {
+    const activar = element.dataset.activar === '1';
+    if (!activar && !window.confirm('¿Desactivar esta cuenta? Perderá acceso al sistema.')) return;
+    try {
+      if (activar) await api(`/usuarios/${element.dataset.toggleUser}`, { method: 'PUT', body: JSON.stringify({ activo: 1 }) });
+      else await api(`/usuarios/${element.dataset.toggleUser}`, { method: 'DELETE' });
+      state.data.users = null;
+      await navigate('usuarios');
+      showToast(activar ? 'Usuario activado correctamente' : 'Usuario desactivado correctamente', 'ok');
+    } catch (error) { mostrarError(error); }
+  });
 }
 
 function showModal(title, content) {
@@ -241,14 +367,30 @@ function showModal(title, content) {
   $('#close-modal').onclick = () => { $('#modal-root').innerHTML = ''; };
 }
 
-function showUserForm() {
-  showModal('Crear usuario', `<form id="user-form"><div class="form-grid"><div class="campo"><label>Usuario</label><input name="username" required></div><div class="campo"><label>Contraseña</label><input name="password" type="password" minlength="6" required></div><div class="campo"><label>Nombres</label><input name="nombres" required></div><div class="campo"><label>Apellidos</label><input name="apellidos" required></div><div class="campo"><label>Rol</label><select name="rol"><option value="tutor">Familia</option><option value="docente">Docente</option><option value="estudiante">Estudiante</option><option value="admin">Administración</option></select></div><div class="campo"><label>Correo</label><input name="email" type="email"></div></div><button class="btn btn-primary btn-block">Guardar usuario</button></form>`);
-  $('#user-form').onsubmit = async (event) => { event.preventDefault(); try { await api('/usuarios', { method: 'POST', body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); $('#modal-root').innerHTML = ''; state.data.users = null; await navigate('usuarios'); showToast('Usuario creado correctamente', 'ok'); } catch (error) { mostrarError(error); } };
+function showUserForm(user = null) {
+  const esEdicion = !!user;
+  const esPropio = esEdicion && user.id === state.user.id;
+  const rolOptions = [['tutor', 'Familia'], ['docente', 'Docente'], ['estudiante', 'Estudiante'], ['admin', 'Administración']]
+    .map(([valor, label]) => `<option value="${valor}" ${user?.rol === valor ? 'selected' : ''}>${label}</option>`).join('');
+  showModal(esEdicion ? 'Editar usuario' : 'Crear usuario', `<form id="user-form"><div class="form-grid"><div class="campo"><label>Usuario</label><input name="username" value="${esc(user?.username || '')}" required></div><div class="campo"><label>Contraseña ${esEdicion ? '<small class="muted">(vacía = sin cambios)</small>' : ''}</label><input name="password" type="password" minlength="6" ${esEdicion ? '' : 'required'}></div><div class="campo"><label>Nombres</label><input name="nombres" value="${esc(user?.nombres || '')}" required></div><div class="campo"><label>Apellidos</label><input name="apellidos" value="${esc(user?.apellidos || '')}" required></div><div class="campo"><label>Rol</label><select name="rol" ${esPropio ? 'disabled' : ''}>${rolOptions}</select></div><div class="campo"><label>Correo</label><input name="email" type="email" value="${esc(user?.email || '')}"></div>${esEdicion && !esPropio ? `<div class="campo"><label>Estado</label><select name="activo"><option value="1" ${user.activo ? 'selected' : ''}>Activo</option><option value="0" ${!user.activo ? 'selected' : ''}>Inactivo</option></select></div>` : ''}</div><button class="btn btn-primary btn-block">${esEdicion ? 'Guardar cambios' : 'Guardar usuario'}</button></form>`);
+  $('#user-form').onsubmit = async (event) => {
+    event.preventDefault();
+    const datos = Object.fromEntries(new FormData(event.currentTarget));
+    if (!datos.password) delete datos.password;
+    try {
+      if (esEdicion) await api(`/usuarios/${user.id}`, { method: 'PUT', body: JSON.stringify(datos) });
+      else await api('/usuarios', { method: 'POST', body: JSON.stringify(datos) });
+      $('#modal-root').innerHTML = ''; state.data.users = null; await navigate('usuarios'); showToast(esEdicion ? 'Usuario actualizado correctamente' : 'Usuario creado correctamente', 'ok');
+    } catch (error) { mostrarError(error); }
+  };
 }
 
 function showCourseForm() {
-  const gestionId = state.data.courses?.[0]?.gestion_id;
-  showModal('Crear curso', `<form id="course-form"><div class="campo"><label>Nombre</label><input name="nombre" placeholder="2° Secundaria" required></div><div class="campo"><label>Capacidad máxima</label><input name="capacidad_max" type="number" min="1" max="40" value="40" required></div><input type="hidden" name="gestion_id" value="${gestionId || ''}"><button class="btn btn-primary btn-block">Guardar curso</button></form>`);
+  const gestiones = state.data.gestiones || [];
+  const gestionCampo = gestiones.length
+    ? `<div class="campo"><label>Gestión</label><select name="gestion_id">${gestiones.map((g) => `<option value="${g.id}" ${g.activa ? 'selected' : ''}>Gestión ${g.anio}${g.activa ? ' (activa)' : ''}</option>`).join('')}</select></div>`
+    : '<div class="campo"><label>Gestión</label><input name="gestion_id" type="number" min="1" placeholder="ID de la gestión" required></div>';
+  showModal('Crear curso', `<form id="course-form"><div class="campo"><label>Nombre</label><input name="nombre" placeholder="2° Secundaria" required></div>${gestionCampo}<div class="campo"><label>Capacidad máxima</label><input name="capacidad_max" type="number" min="1" max="40" value="40" required></div><button class="btn btn-primary btn-block">Guardar curso</button></form>`);
   $('#course-form').onsubmit = async (event) => { event.preventDefault(); try { await api('/cursos', { method: 'POST', body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); $('#modal-root').innerHTML = ''; state.data.courses = null; await navigate('cursos'); showToast('Curso creado correctamente', 'ok'); } catch (error) { mostrarError(error); } };
 }
 
@@ -267,7 +409,7 @@ function showAssignmentForm() {
 }
 
 function showSubjectForm() {
-  showModal('Agregar materia', `<form id="subject-form"><div class="campo"><label>Nombre</label><input name="nombre" required placeholder="Matemática avanzada"></div><div class="campo"><label>Descripción</label><textarea name="descripcion" rows="2"></textarea></div><button class="btn btn-primary btn-block">Guardar materia</button></form>`);
+  showModal('Agregar materia', `<form id="subject-form"><div class="campo"><label>Nombre</label><input name="nombre" required placeholder="Selecciona una materia del catálogo oficial"></div><div class="campo"><label>Descripción</label><textarea name="descripcion" rows="2"></textarea></div><button class="btn btn-primary btn-block">Guardar materia</button></form>`);
   $('#subject-form').onsubmit = async (event) => { event.preventDefault(); try { await api('/materias', { method: 'POST', body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); $('#modal-root').innerHTML = ''; await navigate('academico'); showToast('Materia creada correctamente', 'ok'); } catch (error) { mostrarError(error); } };
 }
 
@@ -275,12 +417,15 @@ async function exportStudents() {
   try { const response = await fetch(`${API}/estudiantes/export`, { headers: { Authorization: `Bearer ${state.token}` } }); if (!response.ok) throw new Error('No se pudo exportar la lista'); const blob = await response.blob(); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'estudiantes.csv'; link.click(); URL.revokeObjectURL(url); } catch (error) { mostrarError(error); }
 }
 
-function showTaskForm(task = null) {
-  const options = (state.data.asignaciones || []).map((a) => `<option value="${a.id}">${esc(a.materia)} · ${esc(a.curso)}</option>`).join('');
+async function showTaskForm(task = null) {
+  const asignaciones = await api('/docente/asignaciones');
+  state.data.asignaciones = asignaciones;
+  const options = asignaciones.map((a) => `<option value="${a.id}">${esc(a.curso)} · ${esc(a.materia)} · ${a.total_estudiantes} estudiantes</option>`).join('');
+  if (!options) { showToast('No hay cursos disponibles para crear la tarea', 'info'); return; }
   const titulo = task ? 'Editar tarea' : 'Publicar tarea';
   const action = task ? `/tareas/${task.id}` : '/tareas';
   const method = task ? 'PUT' : 'POST';
-  showModal(titulo, `<form id="task-form"><div class="campo"><label>Clase</label><select name="asignacion_id" ${task ? 'disabled' : ''} required>${options}</select></div><div class="campo"><label>Título</label><input name="titulo" value="${esc(task?.titulo || '')}" required></div><div class="campo"><label>Descripción</label><textarea name="descripcion" rows="3">${esc(task?.descripcion || '')}</textarea></div><div class="form-grid"><div class="campo"><label>Tipo</label><select name="tipo"><option value="tarea" ${task?.tipo === 'tarea' ? 'selected' : ''}>Tarea</option><option value="actividad" ${task?.tipo === 'actividad' ? 'selected' : ''}>Actividad</option><option value="trabajo_practico" ${task?.tipo === 'trabajo_practico' ? 'selected' : ''}>Trabajo práctico</option><option value="examen" ${task?.tipo === 'examen' ? 'selected' : ''}>Examen</option></select></div><div class="campo"><label>Fecha de entrega</label><input name="fecha_entrega" type="date" value="${esc(task?.fecha_entrega || '')}"></div></div><div class="campo"><label>Material de apoyo</label><input name="archivo" type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.zip"><small class="ayuda">Máximo 10 MB.</small></div><button class="btn btn-primary btn-block">${task ? 'Guardar cambios' : 'Publicar tarea'}</button></form>`);
+  showModal(titulo, `<form id="task-form"><div class="campo"><label>Clase</label><select name="asignacion_id" required>${options}</select></div><div class="campo"><label>Título</label><input name="titulo" value="${esc(task?.titulo || '')}" required></div><div class="campo"><label>Descripción</label><textarea name="descripcion" rows="3">${esc(task?.descripcion || '')}</textarea></div><div class="form-grid"><div class="campo"><label>Tipo</label><select name="tipo"><option value="tarea" ${task?.tipo === 'tarea' ? 'selected' : ''}>Tarea</option><option value="actividad" ${task?.tipo === 'actividad' ? 'selected' : ''}>Actividad</option><option value="trabajo_practico" ${task?.tipo === 'trabajo_practico' ? 'selected' : ''}>Trabajo práctico</option><option value="examen" ${task?.tipo === 'examen' ? 'selected' : ''}>Examen</option></select></div><div class="campo"><label>Fecha de entrega</label><input name="fecha_entrega" type="date" value="${esc(task?.fecha_entrega || '')}"></div></div><div class="campo"><label>Material de apoyo</label><input name="archivo" type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.zip"><small class="ayuda">Máximo 10 MB.</small></div><button class="btn btn-primary btn-block">${task ? 'Guardar cambios' : 'Publicar tarea'}</button></form>`);
   if (task) $('#task-form [name="asignacion_id"]').value = task.asignacion_id;
   $('#task-form').onsubmit = async (event) => { event.preventDefault(); try { await api(action, { method, body: new FormData(event.currentTarget) }); $('#modal-root').innerHTML = ''; await navigate('tareas'); showToast(task ? 'Tarea actualizada correctamente' : 'Tarea publicada correctamente', 'ok'); } catch (error) { mostrarError(error); } };
 }
@@ -288,10 +433,15 @@ function showTaskForm(task = null) {
 async function showReviewForm(taskId) {
   try {
     const result = await api(`/entregas?tarea_id=${taskId}`);
-    showModal(`Revisar: ${result.tarea.titulo}`, `<p class="muted">Las entregas pendientes aún deben ser completadas por el estudiante o su tutor.</p><div class="review-list">${result.entregas.length ? result.entregas.map((entrega) => `<article class="review-item ${entrega.estado !== 'completada' ? 'review-pending' : ''}"><div><strong>${esc(entrega.apellidos)}, ${esc(entrega.nombres)}</strong><small>${entrega.estado !== 'completada' ? 'Pendiente de entrega' : entrega.revisada ? `Revisada el ${fecha(entrega.revision_fecha)}` : 'Entregada · pendiente de revisión'}</small></div>${entrega.estado === 'completada' ? `${entrega.archivo_path ? `<button class="btn btn-outline btn-sm" data-download-evidence="${entrega.id}">Descargar evidencia</button>` : '<small>Sin archivo adjunto</small>'}<textarea data-review-comment="${entrega.id}" rows="2" placeholder="Comentario para el estudiante">${esc(entrega.revision_comentario || '')}</textarea><button class="btn ${entrega.revisada ? 'btn-gris' : 'btn-verde'} btn-sm" data-review-delivery="${entrega.id}">${entrega.revisada ? 'Actualizar revisión' : 'Marcar revisada'}</button>` : '<span class="tag">Esperando entrega</span>'}</article>`).join('') : empty('No hay estudiantes asignados')}</div>`);
+    showModal(`Revisar: ${result.tarea.titulo}`, `<p class="muted">El docente puede calificar cada estudiante aunque todavía no haya adjuntado la tarea.</p><div class="form-grid"><div class="campo"><label>Trimestre</label><select id="review-trimester"><option value="1">Trimestre 1</option><option value="2">Trimestre 2</option><option value="3">Trimestre 3</option></select></div><div class="campo"><label>Campo a calificar</label><small class="ayuda">Selecciona SER, SABER o HACER para cada estudiante.</small></div></div><div class="review-list">${result.entregas.length ? result.entregas.map((entrega) => `<article class="review-item ${entrega.estado !== 'completada' ? 'review-pending' : ''}"><div><strong>${esc(entrega.apellidos)}, ${esc(entrega.nombres)}</strong><small>${entrega.estado !== 'completada' ? 'Sin entrega adjunta' : entrega.revisada ? `Revisada el ${fecha(entrega.revision_fecha)}` : 'Entregada · pendiente de revisión'}</small></div>${entrega.archivo_path ? `<button class="btn btn-outline btn-sm" data-download-evidence="${entrega.id}">Descargar evidencia</button>` : '<small>Sin archivo adjunto</small>'}<div class="form-grid"><div class="campo"><label>Campo</label><select data-review-component="${entrega.id}"><option value="ser">SER /10</option><option value="saber">SABER /45</option><option value="hacer">HACER /40</option></select></div><div class="campo"><label>Puntos</label><input data-review-score="${entrega.id}" type="number" min="0" step="0.5" placeholder="0"></div></div><textarea data-review-comment="${entrega.id}" rows="2" placeholder="Comentario para el estudiante">${esc(entrega.revision_comentario || '')}</textarea><button class="btn ${entrega.revisada ? 'btn-gris' : 'btn-verde'} btn-sm" data-review-delivery="${entrega.id}">${entrega.revisada ? 'Actualizar revisión y nota' : 'Guardar calificación'}</button></article>`).join('') : empty('No hay estudiantes asignados')}</div>`);
     $('#modal-root').querySelectorAll('[data-review-delivery]').forEach((button) => button.onclick = async () => {
-      const comentario = $('#modal-root').querySelector(`[data-review-comment="${button.dataset.reviewDelivery}"]`).value;
-      try { await api(`/entregas/${button.dataset.reviewDelivery}/revisar`, { method: 'PUT', body: JSON.stringify({ comentario }) }); $('#modal-root').innerHTML = ''; await navigate('tareas'); showToast('Entrega revisada y estudiante notificado', 'ok'); } catch (error) { mostrarError(error); }
+      const id = button.dataset.reviewDelivery;
+      const comentario = $('#modal-root').querySelector(`[data-review-comment="${id}"]`).value;
+      const componente = $('#modal-root').querySelector(`[data-review-component="${id}"]`).value;
+      const valor = $('#modal-root').querySelector(`[data-review-score="${id}"]`).value;
+      if (valor === '') { mostrarError(new Error('Ingresa los puntos de la calificación')); return; }
+      const trimestre = Number($('#modal-root').querySelector('#review-trimester').value);
+      try { await api(`/entregas/${id}/revisar`, { method: 'PUT', body: JSON.stringify({ comentario, trimestre, componente, valor: Number(valor) }) }); $('#modal-root').innerHTML = ''; await navigate('tareas'); showToast('Entrega revisada y nota guardada', 'ok'); } catch (error) { mostrarError(error); }
     });
     $('#modal-root').querySelectorAll('[data-download-evidence]').forEach((button) => button.onclick = () => downloadEvidence(Number(button.dataset.downloadEvidence)));
   } catch (error) { mostrarError(error); }
@@ -314,13 +464,40 @@ async function showAssignment(id) {
   if (!root) return;
   root.innerHTML = loading('Cargando estudiantes...');
   try {
-    const renderGrades = async (bimestre) => {
-      const data = await api(`/docente/estudiantes?asignacion_id=${id}&bimestre=${bimestre}`);
-      root.innerHTML = `<section class="card"><div class="section-heading"><div><h2>${esc(data.asignacion.materia)}</h2><p class="muted">${esc(data.asignacion.curso)}</p></div><div class="grade-tools"><select id="grade-term"><option value="1" ${bimestre === 1 ? 'selected' : ''}>Bimestre 1</option><option value="2" ${bimestre === 2 ? 'selected' : ''}>Bimestre 2</option><option value="3" ${bimestre === 3 ? 'selected' : ''}>Bimestre 3</option><option value="4" ${bimestre === 4 ? 'selected' : ''}>Bimestre 4</option></select><button class="btn btn-verde btn-sm" data-action="save-note">Guardar notas</button></div></div><div class="table-wrap"><table class="grades-table"><thead><tr><th>Estudiante</th><th>Ser<br><small>/20</small></th><th>Saber<br><small>/40</small></th><th>Hacer<br><small>/30</small></th><th>Decidir<br><small>/10</small></th><th>Total</th></tr></thead><tbody>${data.estudiantes.map((e) => { const n = e.nota_bimestre || {}; return `<tr data-student="${e.id}"><td><strong>${esc(e.apellidos)}, ${esc(e.nombres)}</strong><small>${esc(e.rude)}</small></td>${[['ser', 20], ['saber', 40], ['hacer', 30], ['decidir', 10]].map(([key, max]) => `<td><input class="grade-input" data-grade="${key}" type="number" min="0" max="${max}" step="0.5" value="${n[key] ?? ''}"></td>`).join('')}<td><strong class="row-total">${n.promedio ?? '—'}</strong></td></tr>`; }).join('')}</tbody></table></div></section>`;
+    const data = await api(`/docente/estudiantes?asignacion_id=${id}`);
+    const asig = (state.data.asignaciones || []).find((a) => a.id === id) || {};
+    const obs = asig.curso_id ? await api(`/observaciones?curso_id=${asig.curso_id}`).catch(() => []) : [];
+    // Abrir en el último trimestre con notas registradas (o trimestre 1)
+    const conNotas = [1, 2, 3].filter((b) => data.estudiantes.some((e) => e.notas && e.notas[b]));
+    const inicial = conNotas.length ? Math.max(...conNotas) : 1;
+
+    const renderGrades = (bimestre) => {
+      root.innerHTML = `<section class="card"><div class="section-heading"><div><h2>${esc(data.asignacion.materia)}</h2><p class="muted">${esc(data.asignacion.curso)}</p></div><div class="grade-tools"><select id="grade-term"><option value="1" ${bimestre === 1 ? 'selected' : ''}>Trimestre 1</option><option value="2" ${bimestre === 2 ? 'selected' : ''}>Trimestre 2</option><option value="3" ${bimestre === 3 ? 'selected' : ''}>Trimestre 3</option></select><button class="btn btn-verde btn-sm" id="save-grades">Guardar notas</button></div></div><div class="table-wrap"><table class="grades-table"><thead><tr><th>Estudiante</th>${COMPONENTES.map(([key, label, max]) => `<th>${label}<br><small>/${max}</small></th>`).join('')}<th>Total</th></tr></thead><tbody>${data.estudiantes.map((e) => { const n = (e.notas && e.notas[bimestre]) || {}; const t = (e.acumulado_tareas && e.acumulado_tareas[bimestre]) || {}; const acumulado = [t.ser !== undefined ? `SER ${t.ser}` : '', t.saber !== undefined ? `SABER ${t.saber}` : '', t.hacer !== undefined ? `HACER ${t.hacer}` : ''].filter(Boolean).join(' · ') || 'Sin calificaciones de tareas'; return `<tr data-student="${e.id}"><td><strong>${esc(e.apellidos)}, ${esc(e.nombres)}</strong><small>${esc(e.rude)}</small><small class="task-accumulated">Tareas: ${esc(acumulado)}</small></td>${COMPONENTES.map(([key, , max]) => `<td><input class="grade-input" data-grade="${key}" type="number" min="0" max="${max}" step="0.5" value="${n[key] ?? ''}"></td>`).join('')}<td><strong class="row-total">${n.ser !== undefined ? Math.round((Number(n.ser) + Number(n.saber) + Number(n.hacer) + Number(n.decidir)) * 100) / 100 : '—'}</strong></td></tr>`; }).join('')}</tbody></table></div><p class="muted" style="margin-top:8px">Las notas de tareas se acumulan por dimensión y se reflejan aquí. Ser /10 · Saber /45 · Hacer /40 · Autoevaluación /5.</p></section>
+      <section class="card"><div class="section-heading"><h2>Observaciones del curso</h2></div>
+        <form id="obs-form"><div class="form-grid"><div class="campo"><label>Estudiante</label><select name="estudiante_id">${data.estudiantes.map((e) => `<option value="${e.id}">${esc(e.apellidos)}, ${esc(e.nombres)}</option>`).join('')}</select></div><div class="campo"><label>Tipo</label><select name="tipo"><option value="academica">Académica</option><option value="conductual">Conductual</option></select></div><div class="campo campo-full"><label>Descripción</label><textarea name="descripcion" rows="2" required></textarea></div></div><div class="action-row"><button class="btn btn-primary btn-sm" type="submit">Guardar observación</button></div></form>
+        <div id="obs-list">${obs.length ? obs.map((o) => `<div class="notice-line"><span class="puntito ${o.tipo === 'conductual' ? 'amarillo' : 'verde'}"></span><div><strong>${esc(o.estudiante)}${o.materia ? ` · ${esc(o.materia)}` : ''}</strong><p>${esc(o.descripcion)}</p><small>${esc(o.docente)} · ${fecha(o.fecha)}</small></div>${(o.docente_id === state.user.id || state.user.rol === 'admin') ? `<button class="btn btn-rojo btn-sm" data-del-obs="${o.id}">Eliminar</button>` : ''}</div>`).join('') : empty('No hay observaciones registradas')}</div>
+      </section>`;
       root.querySelector('#grade-term').onchange = (event) => renderGrades(Number(event.target.value));
-      root.querySelector('[data-action="save-note"]').onclick = async () => { for (const row of root.querySelectorAll('tbody tr')) { const inputs = [...row.querySelectorAll('[data-grade]')]; if (inputs.every((input) => input.value === '')) continue; const values = Object.fromEntries(inputs.map((input) => [input.dataset.grade, Number(input.value || 0)])); await api('/notas', { method: 'PUT', body: JSON.stringify({ estudiante_id: Number(row.dataset.student), materia_id: data.asignacion.materia_id, bimestre, ...values }) }); } showToast(`Notas del bimestre ${bimestre} guardadas`, 'ok'); };
+      root.querySelector('#save-grades').onclick = async () => {
+        for (const row of root.querySelectorAll('tbody tr')) {
+          const inputs = [...row.querySelectorAll('[data-grade]')];
+          if (inputs.every((input) => input.value === '')) continue;
+          const values = Object.fromEntries(inputs.map((input) => [input.dataset.grade, Number(input.value || 0)]));
+          await api('/notas', { method: 'PUT', body: JSON.stringify({ estudiante_id: Number(row.dataset.student), materia_id: data.asignacion.materia_id, trimestre: bimestre, ...values }) });
+        }
+        showToast(`Notas del trimestre ${bimestre} guardadas`, 'ok');
+      };
+      root.querySelector('#obs-form').onsubmit = async (event) => {
+        event.preventDefault();
+        const datos = Object.fromEntries(new FormData(event.currentTarget));
+        try { await api('/observaciones', { method: 'POST', body: JSON.stringify({ ...datos, estudiante_id: Number(datos.estudiante_id), asignacion_id: id }) }); showToast('Observación registrada y familia notificada', 'ok'); await showAssignment(id); } catch (error) { mostrarError(error); }
+      };
+      root.querySelectorAll('[data-del-obs]').forEach((button) => button.onclick = async () => {
+        if (!window.confirm('¿Eliminar esta observación?')) return;
+        try { await api(`/observaciones/${button.dataset.delObs}`, { method: 'DELETE' }); await showAssignment(id); showToast('Observación eliminada', 'ok'); } catch (error) { mostrarError(error); }
+      });
     };
-    await renderGrades(2);
+    renderGrades(inicial);
   } catch (error) { root.innerHTML = `<div class="card"><p>${esc(error.message)}</p></div>`; }
 }
 

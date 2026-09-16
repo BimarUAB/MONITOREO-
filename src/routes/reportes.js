@@ -21,10 +21,12 @@ router.get('/reportes/rendimiento', asyncHandler(async (req, res) => {
   if (!curso) throw noEncontrado('Curso no encontrado');
 
   let gestionId = curso.gestion_id;
+  let gestionAnio = curso.anio;
   if (gestion) {
     const g = db.prepare('SELECT * FROM gestiones WHERE anio = ?').get(Number(gestion));
     if (!g) throw noEncontrado('Gestión no encontrada');
     gestionId = g.id;
+    gestionAnio = g.anio;
   }
 
   const asignaciones = db.prepare(`
@@ -36,9 +38,11 @@ router.get('/reportes/rendimiento', asyncHandler(async (req, res) => {
 
   const notas = db.prepare(`
     SELECT n.materia_id, n.ser, n.saber, n.hacer, n.decidir
-    FROM notas n JOIN estudiantes e ON e.id = n.estudiante_id
-    WHERE e.curso_id = ?
-  `).all(curso_id);
+    FROM notas n
+    JOIN estudiantes e ON e.id = n.estudiante_id
+    JOIN cursos c ON c.id = e.curso_id
+    WHERE e.curso_id = ? AND c.gestion_id = ?
+  `).all(curso_id, gestionId);
 
   const porMateria = {};
   for (const n of notas) {
@@ -53,7 +57,10 @@ router.get('/reportes/rendimiento', asyncHandler(async (req, res) => {
     const promCurso = proms.length ? Math.round((proms.reduce((x, y) => x + y, 0) / proms.length) * 100) / 100 : null;
     const enRiesgo = proms.filter((p) => p < 50).length;
     const distribucion = { Domina: 0, Sobresaliente: 0, Distinguido: 0, Bueno: 0, Suficiente: 0, Insuficiente: 0 };
-    for (const p of proms) distribucion[cualitativo(p)]++;
+    for (const p of proms) {
+      const cat = cualitativo(p);
+      if (cat) distribucion[cat]++;
+    }
     return {
       materia_id: a.materia_id,
       materia: a.materia,
@@ -66,7 +73,7 @@ router.get('/reportes/rendimiento', asyncHandler(async (req, res) => {
     };
   });
 
-  res.json({ curso: { id: curso.id, nombre: curso.nombre }, gestion: curso.anio, materias: resultado });
+  res.json({ curso: { id: curso.id, nombre: curso.nombre }, gestion: gestionAnio, materias: resultado });
 }));
 
 // ---------- ESTUDIANTES EN RIESGO ----------
@@ -77,7 +84,7 @@ router.get('/reportes/riesgo', asyncHandler(async (req, res) => {
   const curso = db.prepare('SELECT * FROM cursos WHERE id = ?').get(curso_id);
   if (!curso) throw noEncontrado('Curso no encontrado');
 
-  // Bimestre "actual": el mayor bimestre con notas registradas en el curso
+  // Trimestre "actual": el mayor trimestre con notas registradas en el curso
   const bimActual = db.prepare(`
     SELECT MAX(n.bimestre) AS b FROM notas n JOIN estudiantes e ON e.id = n.estudiante_id
     WHERE e.curso_id = ?
@@ -107,10 +114,10 @@ router.get('/reportes/riesgo', asyncHandler(async (req, res) => {
       }
     }
     if (materiasRiesgo.length) {
-      enRiesgo.push({ estudiante: e, bimestre_actual: bimActual, materias_en_riesgo: materiasRiesgo });
+      enRiesgo.push({ estudiante: e, trimestre_actual: bimActual, materias_en_riesgo: materiasRiesgo });
     }
   }
-  res.json({ curso: { id: curso.id, nombre: curso.nombre }, bimestre_actual: bimActual, estudiantes: enRiesgo });
+  res.json({ curso: { id: curso.id, nombre: curso.nombre }, trimestre_actual: bimActual, estudiantes: enRiesgo });
 }));
 
 // ---------- HISTORIAL POR ESTUDIANTE (todas las gestiones) ----------

@@ -3,8 +3,14 @@
 const bcrypt = require('bcryptjs');
 const db = require('./db');
 
-const MATERIAS = ['Matemática', 'Física', 'Química', 'Biología', 'Lenguaje', 'Literatura', 'Inglés',
-  'Historia', 'Geografía', 'Filosofía', 'Educación Física', 'Religión', 'Técnica', 'Artes Plásticas', 'Música'];
+const MATERIAS = [
+  'LENGUA CASTELLANA Y ORIGINARIA', 'LENGUA EXTRANJERA', 'CIENCIAS SOCIALES',
+  'EDUCACIÓN FÍSICA Y DEPORTES', 'EDUCACIÓN MUSICAL', 'ARTES PLÁSTICAS Y VISUALES',
+  'MATEMÁTICA', 'TÉCNICA TECNOLÓGICA GENERAL', 'COMPUTACIÓN / INFORMÁTICA',
+  'CIENCIAS NATURALES BIOLOGÍA - GEOGRAFIA', 'CIENCIAS NATURALES: FÍSICA',
+  'CIENCIAS NATURALES: QUÍMICA', 'COSMOVISIONES FILOSOFÍA Y PSICOLOGIA',
+  'VALORES ESPIRITUALIDAD Y RELIGIONES',
+];
 
 const NOMBRES_E = ['Juan', 'María', 'Pedro', 'Ana', 'Luis', 'Carmen', 'Diego', 'Lucía', 'Miguel', 'Sofía', 'Andrés', 'Valeria'];
 const APELLIDOS_E = ['Quispe', 'Mamani', 'Condori', 'Apaza', 'Huanca', 'Paredes', 'Zurita', 'Vargas', 'Flores', 'Rojas', 'Calle', 'Torrez'];
@@ -65,32 +71,32 @@ db.tx(() => {
     estudiantes.push(Number(insEst.run(usuarioId, rude, NOMBRES_E[i], APELLIDOS_E[i], `201${3 - (i % 5)}-0${(i % 9) + 1}-1${i % 9}`, cursos[cursoIdx]).lastInsertRowid));
   }
 
-  // Asignaciones: docente1 -> Matemática 1°, docente2 -> Lenguaje 1°, docente3 -> Matemática 4°, docente4 -> Historia 4°
+  // Asignaciones de demostración usando el catálogo oficial.
   const insAsig = db.prepare('INSERT INTO asignaciones (docente_id, materia_id, curso_id, gestion_id) VALUES (?,?,?,?)');
-  const asig1 = Number(insAsig.run(docentes[0], materias['Matemática'], cursos[0], gestionId).lastInsertRowid);
-  const asig2 = Number(insAsig.run(docentes[1], materias['Lenguaje'], cursos[0], gestionId).lastInsertRowid);
-  const asig3 = Number(insAsig.run(docentes[2], materias['Matemática'], cursos[3], gestionId).lastInsertRowid);
-  const asig4 = Number(insAsig.run(docentes[3], materias['Historia'], cursos[3], gestionId).lastInsertRowid);
-  insAsig.run(docentes[4], materias['Biología'], cursos[0], gestionId);
-  insAsig.run(docentes[5], materias['Inglés'], cursos[3], gestionId);
-  insAsig.run(docentes[6], materias['Educación Física'], cursos[0], gestionId);
-  insAsig.run(docentes[7], materias['Física'], cursos[3], gestionId);
+  const asig1 = Number(insAsig.run(docentes[0], materias['MATEMÁTICA'], cursos[0], gestionId).lastInsertRowid);
+  const asig2 = Number(insAsig.run(docentes[1], materias['LENGUA CASTELLANA Y ORIGINARIA'], cursos[0], gestionId).lastInsertRowid);
+  const asig3 = Number(insAsig.run(docentes[2], materias['MATEMÁTICA'], cursos[3], gestionId).lastInsertRowid);
+  const asig4 = Number(insAsig.run(docentes[3], materias['CIENCIAS SOCIALES'], cursos[3], gestionId).lastInsertRowid);
+  insAsig.run(docentes[4], materias['CIENCIAS NATURALES BIOLOGÍA - GEOGRAFIA'], cursos[0], gestionId);
+  insAsig.run(docentes[5], materias['LENGUA EXTRANJERA'], cursos[3], gestionId);
+  insAsig.run(docentes[6], materias['EDUCACIÓN FÍSICA Y DEPORTES'], cursos[0], gestionId);
+  insAsig.run(docentes[7], materias['CIENCIAS NATURALES: FÍSICA'], cursos[3], gestionId);
 
-  // Notas bimestres 1 y 2 para todos (Matemática/Lenguaje 1° y Matemática/Historia 4°)
+  // Notas de trimestres 1 y 2 para todos (Matemática/Lengua 1° y Matemática/Ciencias Sociales 4°)
   const insNota = db.prepare('INSERT INTO notas (estudiante_id, materia_id, bimestre, ser, saber, hacer, decidir) VALUES (?,?,?,?,?,?,?)');
   const rand = (min, max) => Math.round((min + Math.random() * (max - min)) * 2) / 2;
   const plan = [
-    { curso: 0, materia: materias['Matemática'] },
-    { curso: 0, materia: materias['Lenguaje'] },
-    { curso: 3, materia: materias['Matemática'] },
-    { curso: 3, materia: materias['Historia'] },
+    { curso: 0, materia: materias['MATEMÁTICA'] },
+    { curso: 0, materia: materias['LENGUA CASTELLANA Y ORIGINARIA'] },
+    { curso: 3, materia: materias['MATEMÁTICA'] },
+    { curso: 3, materia: materias['CIENCIAS SOCIALES'] },
   ];
   for (const p of plan) {
     for (const eid of estudiantes) {
       const cursoEst = db.prepare('SELECT curso_id FROM estudiantes WHERE id = ?').get(eid).curso_id;
       if (cursoEst !== cursos[p.curso]) continue;
       for (const bim of [1, 2]) {
-        insNota.run(eid, p.materia, bim, rand(12, 19), rand(25, 38), rand(18, 28), rand(6, 10));
+        insNota.run(eid, p.materia, bim, rand(8, 10), rand(32, 42), rand(28, 37), rand(3, 5));
       }
     }
   }
@@ -122,7 +128,7 @@ db.tx(() => {
 
   // Observaciones
   const insObs = db.prepare('INSERT INTO observaciones (estudiante_id, asignacion_id, docente_id, tipo, descripcion, fecha) VALUES (?,?,?,?,?,?)');
-  insObs.run(estudiantes[0], asig1, docentes[0], 'academica', 'Mejoró su participación en clase durante el segundo bimestre.', '2026-03-10 10:00:00');
+  insObs.run(estudiantes[0], asig1, docentes[0], 'academica', 'Mejoró su participación en clase durante el segundo trimestre.', '2026-03-10 10:00:00');
   insObs.run(estudiantes[2], asig2, docentes[1], 'conductual', 'Llegó tarde 3 veces esta semana; se recomienda puntualidad.', '2026-03-11 09:30:00');
   insObs.run(estudiantes[8], asig3, docentes[2], 'academica', 'Necesita reforzar el tema de funciones cuadráticas.', '2026-03-12 11:00:00');
 
@@ -140,9 +146,9 @@ db.tx(() => {
 
   // Notificaciones de ejemplo
   const insNotif = db.prepare('INSERT INTO notificaciones (usuario_id, titulo, mensaje, tipo) VALUES (?,?,?,?)');
-  insNotif.run(tutor1Id, 'Nuevas notas de Matemática — Bimestre 2', 'Juan Quispe tiene nuevas notas registradas en Matemática (Bimestre 2).', 'notas');
+  insNotif.run(tutor1Id, 'Nuevas notas de MATEMÁTICA — Trimestre 2', 'Juan Quispe tiene nuevas notas registradas en MATEMÁTICA (Trimestre 2).', 'notas');
   insNotif.run(tutor1Id, 'Comunicado: Reunión de padres 1° Secundaria', 'Reunión de padres de familia el viernes 20 de marzo a horas 15:00.', 'comunicado');
-  insNotif.run(est1, 'Nueva tarea de Matemática', 'Se publicó "Ejercicios de ecuaciones" (tarea).', 'tarea');
+  insNotif.run(est1, 'Nueva tarea de MATEMÁTICA', 'Se publicó "Ejercicios de ecuaciones" (tarea).', 'tarea');
 });
 
 console.log('Base de datos poblada con datos de demostración.');

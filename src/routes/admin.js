@@ -10,6 +10,14 @@ const router = express.Router();
 router.use(['/usuarios', '/cursos', '/materias'], requireRole('admin'));
 
 const ROLES = ['admin', 'docente', 'tutor', 'estudiante'];
+const MATERIAS_OFICIALES = new Set([
+  'LENGUA CASTELLANA Y ORIGINARIA', 'LENGUA EXTRANJERA', 'CIENCIAS SOCIALES',
+  'EDUCACIÓN FÍSICA Y DEPORTES', 'EDUCACIÓN MUSICAL', 'ARTES PLÁSTICAS Y VISUALES',
+  'MATEMÁTICA', 'TÉCNICA TECNOLÓGICA GENERAL', 'COMPUTACIÓN / INFORMÁTICA',
+  'CIENCIAS NATURALES BIOLOGÍA - GEOGRAFIA', 'CIENCIAS NATURALES: FÍSICA',
+  'CIENCIAS NATURALES: QUÍMICA', 'COSMOVISIONES FILOSOFÍA Y PSICOLOGIA',
+  'VALORES ESPIRITUALIDAD Y RELIGIONES',
+]);
 
 // ---------- USUARIOS ----------
 router.get('/usuarios', asyncHandler(async (req, res) => {
@@ -43,6 +51,11 @@ router.put('/usuarios/:id', asyncHandler(async (req, res) => {
   const usuario = db.prepare('SELECT * FROM usuarios WHERE id = ?').get(id);
   if (!usuario) throw noEncontrado('Usuario no encontrado');
   const { nombres, apellidos, email, telefono, password, rol, activo, username } = req.body || {};
+  // Un admin no puede desactivarse ni cambiarse de rol a sí mismo (quedaría sin acceso)
+  if (Number(id) === req.usuario.id) {
+    if (activo !== undefined && !activo) throw badRequest('No puede desactivarse a sí mismo');
+    if (rol && rol !== usuario.rol) throw badRequest('No puede cambiar su propio rol');
+  }
   if (username && username !== usuario.username) {
     const existe = db.prepare('SELECT id FROM usuarios WHERE username = ? AND id != ?').get(username, id);
     if (existe) throw conflicto('El nombre de usuario ya existe');
@@ -134,6 +147,7 @@ router.get('/materias', asyncHandler(async (req, res) => {
 router.post('/materias', asyncHandler(async (req, res) => {
   const { nombre, descripcion } = req.body || {};
   requerirCampos({ nombre }, ['nombre']);
+  if (!MATERIAS_OFICIALES.has(String(nombre).trim())) throw badRequest('La materia no pertenece al catálogo oficial');
   const existe = db.prepare('SELECT id FROM materias WHERE nombre = ?').get(nombre);
   if (existe) throw conflicto('Ya existe una materia con ese nombre');
   const r = db.prepare('INSERT INTO materias (nombre, descripcion) VALUES (?,?)').run(nombre, descripcion || null);
@@ -144,6 +158,7 @@ router.put('/materias/:id', asyncHandler(async (req, res) => {
   const materia = db.prepare('SELECT * FROM materias WHERE id = ?').get(req.params.id);
   if (!materia) throw noEncontrado('Materia no encontrada');
   const { nombre, descripcion } = req.body || {};
+  if (nombre && !MATERIAS_OFICIALES.has(String(nombre).trim())) throw badRequest('La materia no pertenece al catálogo oficial');
   if (nombre && nombre !== materia.nombre) {
     const existe = db.prepare('SELECT id FROM materias WHERE nombre = ? AND id != ?').get(nombre, materia.id);
     if (existe) throw conflicto('Ya existe una materia con ese nombre');

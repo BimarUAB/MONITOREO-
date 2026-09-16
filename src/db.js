@@ -74,12 +74,25 @@ CREATE TABLE IF NOT EXISTS notas (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   estudiante_id INTEGER NOT NULL REFERENCES estudiantes(id) ON DELETE CASCADE,
   materia_id INTEGER NOT NULL REFERENCES materias(id) ON DELETE CASCADE,
-  bimestre INTEGER NOT NULL CHECK (bimestre BETWEEN 1 AND 4),
+  bimestre INTEGER NOT NULL CHECK (bimestre BETWEEN 1 AND 3),
   ser REAL NOT NULL DEFAULT 0,
   saber REAL NOT NULL DEFAULT 0,
   hacer REAL NOT NULL DEFAULT 0,
   decidir REAL NOT NULL DEFAULT 0,
   UNIQUE (estudiante_id, materia_id, bimestre)
+);
+
+CREATE TABLE IF NOT EXISTS calificaciones_tareas (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entrega_id INTEGER NOT NULL UNIQUE REFERENCES entregas(id) ON DELETE CASCADE,
+  estudiante_id INTEGER NOT NULL REFERENCES estudiantes(id) ON DELETE CASCADE,
+  materia_id INTEGER NOT NULL REFERENCES materias(id) ON DELETE CASCADE,
+  trimestre INTEGER NOT NULL CHECK (trimestre BETWEEN 1 AND 3),
+  componente TEXT NOT NULL CHECK (componente IN ('ser','saber','hacer')),
+  valor REAL NOT NULL CHECK (valor >= 0),
+  docente_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 
 CREATE TABLE IF NOT EXISTS tareas (
@@ -153,6 +166,7 @@ CREATE TABLE IF NOT EXISTS materiales (
 CREATE INDEX IF NOT EXISTS idx_estudiantes_curso ON estudiantes(curso_id);
 CREATE INDEX IF NOT EXISTS idx_notas_estudiante ON notas(estudiante_id);
 CREATE INDEX IF NOT EXISTS idx_notas_materia ON notas(materia_id);
+CREATE INDEX IF NOT EXISTS idx_calificaciones_tareas_estudiante ON calificaciones_tareas(estudiante_id, materia_id, trimestre);
 CREATE INDEX IF NOT EXISTS idx_tutor_estudiante_tutor ON tutor_estudiante(tutor_id);
 CREATE INDEX IF NOT EXISTS idx_tutor_estudiante_est ON tutor_estudiante(estudiante_id);
 CREATE INDEX IF NOT EXISTS idx_asignaciones_docente ON asignaciones(docente_id);

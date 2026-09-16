@@ -98,8 +98,8 @@ Ana,Rojas,2011-08-02,1,2026-1S-999
 | Método | Ruta | Body / Query | Response |
 |---|---|---|---|
 | GET | `/api/docente/asignaciones` | — | Mis materias/cursos con total de estudiantes |
-| GET | `/api/docente/estudiantes` | `?asignacion_id=` obligatorio, `?bimestre=1..4` opcional | Estudiantes del curso + notas; con `bimestre` incluye `nota_bimestre` (promedio y cualitativo) |
-| PUT | `/api/notas` | `{estudiante_id, materia_id, bimestre:1..4, ser (≤20), saber (≤40), hacer (≤30), decidir (≤10)}` | Upsert. Valida máximos y que el docente tenga la materia en el curso del estudiante. **Notifica a los tutores**. |
+| GET | `/api/docente/estudiantes` | `?asignacion_id=` obligatorio, `?trimestre=1..3` opcional | Estudiantes del curso + notas; con `trimestre` incluye `nota_trimestre` (promedio y cualitativo) |
+| PUT | `/api/notas` | `{estudiante_id, materia_id, trimestre:1..3, ser (≤10), saber (≤45), hacer (≤40), decidir (≤5)}` | Upsert. Valida máximos y que el docente tenga la materia en el curso del estudiante. El componente `decidir` es la autoevaluación del estudiante. **Notifica a los tutores**. |
 | POST | `/api/tareas` | multipart o JSON `{asignacion_id, titulo, descripcion?, tipo?, fecha_entrega?, link?, archivo?}` | `201`. Crea entregas `pendiente` para cada estudiante del curso y **notifica a tutores**. `tipo`: `tarea\|actividad\|trabajo_practico\|examen` |
 | GET | `/api/tareas` | `?asignacion_id=` | Tareas con conteo de entregas pendientes/completadas |
 | PUT | `/api/tareas/:id` | multipart o JSON (mismos campos) | Actualizada |
@@ -150,9 +150,9 @@ curl -s http://localhost:3000/api/expediente/1 \
   "materias": [
     {
       "materia_id": 1, "materia": "Matemática", "docente": "Rosa Gutiérrez",
-      "bimestres": [
-        { "bimestre": 1, "ser": 15, "saber": 25.5, "hacer": 21.5, "decidir": 8.5, "promedio": 70.5, "cualitativo": "Distinguido" },
-        { "bimestre": 2, "ser": null, "...": "..." }
+      "trimestres": [
+        { "trimestre": 1, "ser": 15, "saber": 25.5, "hacer": 21.5, "decidir": 8.5, "promedio": 70.5, "cualitativo": "Distinguido" },
+        { "trimestre": 2, "ser": null, "...": "..." }
       ],
       "promedio_anual": 68.25,
       "cualitativo_anual": "Bueno",
