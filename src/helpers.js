@@ -15,8 +15,7 @@ const MAX_NOTAS = { ser: 10, saber: 45, hacer: 40, decidir: 5 };
 const COMPONENTES = { ser: 'Ser', saber: 'Saber', hacer: 'Hacer', decidir: 'Autoevaluación' };
 const UMBRAL_APROBACION = 51;
 const TRIMESTRES_POR_GESTION = 3;
-const BIMESTRES_POR_GESTION = TRIMESTRES_POR_GESTION;
-const PUNTOS_APROBACION = UMBRAL_APROBACION * TRIMESTRES_POR_GESTION; // 153
+const PUNTOS_APROBACION = UMBRAL_APROBACION * TRIMESTRES_POR_GESTION;
 
 function redondear2(n) {
   return Math.round((n + Number.EPSILON) * 100) / 100;
@@ -31,13 +30,13 @@ function cualitativo(promedio) {
   return null;
 }
 
-function promedioBimestre({ ser = 0, saber = 0, hacer = 0, decidir = 0 }) {
+function promedioTrimestre({ ser = 0, saber = 0, hacer = 0, decidir = 0 }) {
   return redondear2(ser + saber + hacer + decidir);
 }
 
-// Promedio anual sobre 100 = promedio de los bimestres registrados
-function promedioAnual(bimestres) {
-  const vals = bimestres.filter((b) => b !== null && b !== undefined).map(Number);
+// Promedio anual sobre 100 = promedio de los trimestres registrados
+function promedioAnual(trimestres) {
+  const vals = trimestres.filter((trimestre) => trimestre !== null && trimestre !== undefined).map(Number);
   if (vals.length === 0) return null;
   return redondear2(vals.reduce((a, b) => a + b, 0) / vals.length);
 }
@@ -54,18 +53,16 @@ function aprobado(promedioAnual) {
   return promedioAnual >= UMBRAL_APROBACION;
 }
 
-// Puntos totales faltantes para llegar a 153 en los trimestres restantes.
-// Con todos los trimestres registrados ya no es posible sumar más: 0 puntos por registrar.
-function puntosNecesarios(bimestres) {
-  const registrados = bimestres.filter((b) => b !== null && b !== undefined).map(Number);
+function puntosNecesarios(trimestres) {
+  const registrados = trimestres.filter((trimestre) => trimestre !== null && trimestre !== undefined).map(Number);
   const faltanTrimestres = TRIMESTRES_POR_GESTION - registrados.length;
   if (faltanTrimestres === 0) return 0;
   const suma = registrados.reduce((a, b) => a + b, 0);
   return redondear2(Math.max(0, PUNTOS_APROBACION - suma));
 }
 
-function porcentajeBimestresRegistrados(bimestres) {
-  const n = bimestres.filter((b) => b !== null && b !== undefined).length;
+function porcentajeTrimestresRegistrados(trimestres) {
+  const n = trimestres.filter((trimestre) => trimestre !== null && trimestre !== undefined).length;
   return Math.round((n / TRIMESTRES_POR_GESTION) * 100);
 }
 
@@ -93,15 +90,14 @@ module.exports = {
   COMPONENTES,
   UMBRAL_APROBACION,
   TRIMESTRES_POR_GESTION,
-  BIMESTRES_POR_GESTION,
   PUNTOS_APROBACION,
   redondear2,
   cualitativo,
-  promedioBimestre,
+  promedioTrimestre,
   promedioAnual,
   semaforo,
   aprobado,
   puntosNecesarios,
-  porcentajeBimestresRegistrados,
+  porcentajeTrimestresRegistrados,
   resumenAsistencia,
 };

@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db');
-const { cualitativo, promedioBimestre } = require('../helpers');
+const { cualitativo, promedioTrimestre } = require('../helpers');
 const { requireRole, badRequest, noEncontrado, prohibido, asyncHandler, puedeVerExpediente, esEnteroPositivo } = require('../middleware');
 
 const router = express.Router();
@@ -46,7 +46,7 @@ router.get('/reportes/rendimiento', asyncHandler(async (req, res) => {
 
   const porMateria = {};
   for (const n of notas) {
-    const prom = promedioBimestre(n);
+    const prom = promedioTrimestre(n);
     (porMateria[n.materia_id] = porMateria[n.materia_id] || []).push(prom);
   }
 
@@ -86,7 +86,7 @@ router.get('/reportes/riesgo', asyncHandler(async (req, res) => {
 
   // Trimestre "actual": el mayor trimestre con notas registradas en el curso
   const bimActual = db.prepare(`
-    SELECT MAX(n.bimestre) AS b FROM notas n JOIN estudiantes e ON e.id = n.estudiante_id
+    SELECT MAX(n.trimestre) AS b FROM notas n JOIN estudiantes e ON e.id = n.estudiante_id
     WHERE e.curso_id = ?
   `).get(curso_id).b || 0;
 
@@ -96,19 +96,19 @@ router.get('/reportes/riesgo', asyncHandler(async (req, res) => {
     const notas = db.prepare('SELECT n.*, m.nombre AS materia FROM notas n JOIN materias m ON m.id = n.materia_id WHERE n.estudiante_id = ?').all(e.id);
     const porMateria = {};
     for (const n of notas) {
-      const acc = (porMateria[n.materia_id] = porMateria[n.materia_id] || { materia: n.materia, bimestres: [] });
-      acc.bimestres[n.bimestre] = promedioBimestre(n);
+      const acc = (porMateria[n.materia_id] = porMateria[n.materia_id] || { materia: n.materia, trimestres: [] });
+      acc.trimestres[n.trimestre] = promedioTrimestre(n);
     }
     const materiasRiesgo = [];
     for (const [mid, acc] of Object.entries(porMateria)) {
-      const regs = acc.bimestres.filter((x) => x !== undefined);
+      const regs = acc.trimestres.filter((x) => x !== undefined);
       const anual = regs.length ? regs.reduce((a, b) => a + b, 0) / regs.length : null;
-      const promActual = bimActual > 0 ? (acc.bimestres[bimActual] ?? null) : null;
+      const promActual = bimActual > 0 ? (acc.trimestres[bimActual] ?? null) : null;
       if ((promActual !== null && promActual < 50) || (anual !== null && anual < 51)) {
         materiasRiesgo.push({
           materia_id: Number(mid),
           materia: acc.materia,
-          promedio_bimestre_actual: promActual,
+          promedio_trimestre_actual: promActual,
           promedio_anual: Math.round(anual * 100) / 100,
         });
       }
@@ -137,11 +137,11 @@ router.get('/reportes/historial/:estudiante_id', asyncHandler(async (req, res) =
     JOIN cursos c ON c.id = e.curso_id
     JOIN gestiones g ON g.id = c.gestion_id
     JOIN materias m ON m.id = n.materia_id
-    WHERE n.estudiante_id = ? ORDER BY g.anio, m.nombre, n.bimestre
+    WHERE n.estudiante_id = ? ORDER BY g.anio, m.nombre, n.trimestre
   `).all(estudianteId);
   res.json({
     estudiante: { id: est.id, rude: est.rude, nombres: est.nombres, apellidos: est.apellidos },
-    notas: notas.map((n) => ({ ...n, promedio: promedioBimestre(n), cualitativo: cualitativo(promedioBimestre(n)) })),
+    notas: notas.map((n) => ({ ...n, promedio: promedioTrimestre(n), cualitativo: cualitativo(promedioTrimestre(n)) })),
   });
 }));
 

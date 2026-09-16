@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const db = require('../db');
-const { MAX_NOTAS, promedioBimestre } = require('../helpers');
+const { MAX_NOTAS, promedioTrimestre } = require('../helpers');
 const {
   requireRole, requerirCampos, badRequest, noEncontrado, conflicto, prohibido,
   asyncHandler, notificarTutores, esEnteroPositivo,
@@ -70,74 +70,28 @@ router.get('/docente/asignaciones', asyncHandler(async (req, res) => {
                     g.anio AS gestion, g.id AS gestion_id,
                     (SELECT COUNT(*) FROM estudiantes e WHERE e.curso_id = a.curso_id) AS total_estudiantes,
                     (SELECT COUNT(*) FROM entregas en JOIN tareas t ON t.id = en.tarea_id WHERE t.asignacion_id = a.id AND en.revisada = 1) AS tareas_revisadas,
-                    (SELECT COUNT(*) FROM entregas en JOIN tareas t ON t.id = en.tarea_id WHERE t.asignacion_id = a.id AND en.revisada = 0) AS tareas_pendientes
+                    (SELECT COUNT(*) FROM entregas en JOIN tareas t ON t.id = en.tarea_id WHERE t.asignacion_id = a.id AND en.estado = 'completada' AND en.revisada = 0) AS tareas_pendientes
              FROM asignaciones a
              JOIN materias m ON m.id = a.materia_id
              JOIN cursos c ON c.id = a.curso_id
              JOIN gestiones g ON g.id = a.gestion_id`;
   if (req.usuario.rol === 'docente') {
-    const gestion = db.prepare('SELECT id FROM gestiones WHERE activa = 1').get();
-    if (gestion) {
-      const materias = db.prepare(
-        'SELECT DISTINCT materia_id FROM asignaciones WHERE docente_id = ? AND gestion_id = ?',
-      ).all(req.usuario.id, gestion.id);
-      const cursos = db.prepare(`
-        SELECT c.id FROM cursos c
-        WHERE c.gestion_id = ?
-          AND EXISTS (SELECT 1 FROM estudiantes e WHERE e.curso_id = c.id)
-      `).all(gestion.id);
-      const crear = db.prepare(
-        'INSERT OR IGNORE INTO asignaciones (docente_id, materia_id, curso_id, gestion_id) VALUES (?,?,?,?)',
-      );
-      for (const materia of materias) {
-        for (const curso of cursos) crear.run(req.usuario.id, materia.materia_id, curso.id, gestion.id);
-      }
-    }
-    sql += ' WHERE a.docente_id = ? AND EXISTS (SELECT 1 FROM estudiantes e WHERE e.curso_id = a.curso_id)';
+    sql += ' WHERE a.docente_id = ?';
     params.push(req.usuario.id);
   }
   sql += ' ORDER BY g.anio DESC, c.nombre, m.nombre';
   res.json(db.prepare(sql).all(...params));
 }));
 
-router.get('/docente/dashboard', asyncHandler(async (req, res) => {
-  const asignaciones = db.prepare(`
-    SELECT a.id, c.nombre AS curso, m.nombre AS materia,
-           COUNT(DISTINCT t.id) AS tareas,
-           AVG(CASE WHEN ct.componente = 'ser' THEN ct.valor END) AS ser,
-           AVG(CASE WHEN ct.componente = 'saber' THEN ct.valor END) AS saber,
-           AVG(CASE WHEN ct.componente = 'hacer' THEN ct.valor END) AS hacer,
-           (SELECT AVG(n.decidir) FROM notas n JOIN estudiantes e2 ON e2.id = n.estudiante_id WHERE n.materia_id = a.materia_id AND e2.curso_id = a.curso_id) AS decidir
-    FROM asignaciones a
-    JOIN cursos c ON c.id = a.curso_id
-    JOIN materias m ON m.id = a.materia_id
-    LEFT JOIN tareas t ON t.asignacion_id = a.id
-    LEFT JOIN entregas en ON en.tarea_id = t.id
-    LEFT JOIN calificaciones_tareas ct ON ct.entrega_id = en.id
-    WHERE a.docente_id = ?
-    GROUP BY a.id, c.nombre, m.nombre
-    ORDER BY c.nombre, m.nombre
-  `).all(req.usuario.id);
-  res.json(asignaciones.map((a) => ({
-    ...a,
-    tareas: Number(a.tareas),
-    ser: a.ser === null ? null : Math.round(a.ser * 100) / 100,
-    saber: a.saber === null ? null : Math.round(a.saber * 100) / 100,
-    hacer: a.hacer === null ? null : Math.round(a.hacer * 100) / 100,
-    decidir: a.decidir === null ? null : Math.round(a.decidir * 100) / 100,
-  })));
-}));
-
 // ---------- ESTUDIANTES DEL CURSO DE UNA ASIGNACIÓN ----------
 router.get('/docente/estudiantes', asyncHandler(async (req, res) => {
-  const { asignacion_id, trimestre, bimestre } = req.query;
+  const { asignacion_id, trimestre } = req.query;
   if (!esEnteroPositivo(asignacion_id)) throw badRequest('asignacion_id es obligatorio');
   const a = obtenerAsignacion(Number(asignacion_id), req.usuario);
-  let bim = null;
-  const trimestreSeleccionado = trimestre ?? bimestre;
-  if (trimestreSeleccionado !== undefined) {
-    bim = Number(trimestreSeleccionado);
-    if (![1, 2, 3].includes(bim)) throw badRequest('trimestre debe ser 1..3');
+  let tri = null;
+  if (trimestre !== undefined) {
+    tri = Number(trimestre);
+    if (![1, 2, 3].includes(tri)) throw badRequest('trimestre debe ser 1..3');
   }
   const estudiantes = db.prepare(`
     SELECT e.id, e.rude, e.nombres, e.apellidos FROM estudiantes e WHERE e.curso_id = ? ORDER BY e.apellidos, e.nombres
@@ -148,36 +102,29 @@ router.get('/docente/estudiantes', asyncHandler(async (req, res) => {
     JOIN estudiantes e ON e.id = n.estudiante_id
     WHERE n.materia_id = ? AND e.curso_id = ?
   `).all(a.materia_id, a.curso_id);
-  const calificacionesTareas = db.prepare(`
-    SELECT en.estudiante_id, ct.trimestre, ct.componente, ct.valor
-    FROM calificaciones_tareas ct
-    JOIN entregas en ON en.id = ct.entrega_id
-    JOIN tareas t ON t.id = en.tarea_id
-    WHERE t.asignacion_id = ?
-  `).all(a.id);
+  const calificaciones = db.prepare(`
+    SELECT estudiante_id, trimestre, SUM(COALESCE(ser, 0)) AS ser,
+           SUM(COALESCE(saber, 0)) AS saber, SUM(COALESCE(hacer, 0)) AS hacer
+    FROM calificaciones_tareas
+    WHERE materia_id = ? GROUP BY estudiante_id, trimestre
+  `).all(a.materia_id);
   const porEst = {};
+  const acumuladoPorEst = {};
   for (const n of notas) {
-    (porEst[n.estudiante_id] = porEst[n.estudiante_id] || {})[n.bimestre] = n;
+    (porEst[n.estudiante_id] = porEst[n.estudiante_id] || {})[n.trimestre] = n;
+  }
+  for (const c of calificaciones) {
+    (acumuladoPorEst[c.estudiante_id] = acumuladoPorEst[c.estudiante_id] || {})[c.trimestre] = {
+      ser: Number(c.ser), saber: Number(c.saber), hacer: Number(c.hacer),
+    };
   }
   const resultado = estudiantes.map((e) => {
     const notasEst = porEst[e.id] || {};
-    const acumulado = {};
-    for (const calificacion of calificacionesTareas.filter((item) => item.estudiante_id === e.id)) {
-      const trimestreNotas = acumulado[calificacion.trimestre] || (acumulado[calificacion.trimestre] = {});
-      const campo = trimestreNotas[calificacion.componente] || (trimestreNotas[calificacion.componente] = []);
-      campo.push(calificacion.valor);
-    }
-    for (const trimestre of Object.keys(acumulado)) {
-      for (const campo of Object.keys(acumulado[trimestre])) {
-        const valores = acumulado[trimestre][campo];
-        acumulado[trimestre][campo] = Math.round((valores.reduce((sum, valor) => sum + valor, 0) / valores.length) * 100) / 100;
-      }
-    }
-    const item = { ...e, notas: notasEst, acumulado_tareas: acumulado };
-    if (bim !== null) {
-      const n = notasEst[bim];
-      item.nota_bimestre = n
-        ? { ...n, promedio: promedioBimestre(n), cualitativo: require('../helpers').cualitativo(promedioBimestre(n)) }
+    const item = { ...e, notas: notasEst, acumulado_tareas: acumuladoPorEst[e.id] || {} };
+    if (tri !== null) {
+      const n = notasEst[tri];
+      item.nota_trimestre = n
+        ? { ...n, promedio: promedioTrimestre(n), cualitativo: require('../helpers').cualitativo(promedioTrimestre(n)) }
         : null;
     }
     return item;
@@ -187,13 +134,12 @@ router.get('/docente/estudiantes', asyncHandler(async (req, res) => {
 
 // ---------- NOTAS ----------
 router.put('/notas', asyncHandler(async (req, res) => {
-  const { estudiante_id, materia_id, trimestre, bimestre, ser, saber, hacer, decidir } = req.body || {};
-  const trimestreValor = trimestre ?? bimestre;
-  requerirCampos({ estudiante_id, materia_id, trimestre: trimestreValor }, ['estudiante_id', 'materia_id', 'trimestre']);
+  const { estudiante_id, materia_id, trimestre, ser, saber, hacer, decidir } = req.body || {};
+  requerirCampos({ estudiante_id, materia_id, trimestre }, ['estudiante_id', 'materia_id', 'trimestre']);
   if (!esEnteroPositivo(estudiante_id)) throw badRequest('estudiante_id inválido');
   if (!esEnteroPositivo(materia_id)) throw badRequest('materia_id inválido');
-  const bim = Number(trimestreValor);
-  if (![1, 2, 3].includes(bim)) throw badRequest('trimestre debe ser 1..3');
+  const tri = Number(trimestre);
+  if (![1, 2, 3].includes(tri)) throw badRequest('trimestre debe ser 1..3');
   const valores = { ser: ser ?? 0, saber: saber ?? 0, hacer: hacer ?? 0, decidir: decidir ?? 0 };
   for (const [k, v] of Object.entries(valores)) {
     const num = Number(v);
@@ -208,33 +154,35 @@ router.put('/notas', asyncHandler(async (req, res) => {
     const asig = docenteTieneMateriaEnCurso(req.usuario.id, materia_id, est.curso_id, est.gestion_id);
     if (!asig) throw prohibido('No tiene esta materia asignada en el curso del estudiante');
   }
-  const existe = db.prepare('SELECT id FROM notas WHERE estudiante_id=? AND materia_id=? AND bimestre=?')
-    .get(estudiante_id, materia_id, bim);
+  const existe = db.prepare('SELECT id FROM notas WHERE estudiante_id=? AND materia_id=? AND trimestre=?')
+    .get(estudiante_id, materia_id, tri);
   if (existe) {
     db.prepare('UPDATE notas SET ser=?, saber=?, hacer=?, decidir=? WHERE id=?')
       .run(valores.ser, valores.saber, valores.hacer, valores.decidir, existe.id);
   } else {
-    db.prepare('INSERT INTO notas (estudiante_id, materia_id, bimestre, ser, saber, hacer, decidir) VALUES (?,?,?,?,?,?,?)')
-      .run(estudiante_id, materia_id, bim, valores.ser, valores.saber, valores.hacer, valores.decidir);
+    db.prepare('INSERT INTO notas (estudiante_id, materia_id, trimestre, ser, saber, hacer, decidir) VALUES (?,?,?,?,?,?,?)')
+      .run(estudiante_id, materia_id, tri, valores.ser, valores.saber, valores.hacer, valores.decidir);
   }
   const materia = db.prepare('SELECT nombre FROM materias WHERE id = ?').get(materia_id);
-  notificarTutores(estudiante_id, `Nuevas notas de ${materia.nombre} — Trimestre ${bim}`,
-    `${est.nombres} ${est.apellidos} tiene nuevas notas registradas en ${materia.nombre} (Trimestre ${bim}).`, 'notas');
-  res.json({ mensaje: 'Nota guardada correctamente', estudiante_id, materia_id, trimestre: bim, bimestre: bim, ...valores });
+  notificarTutores(estudiante_id, `Nuevas notas de ${materia.nombre} — Trimestre ${tri}`,
+    `${est.nombres} ${est.apellidos} tiene nuevas notas registradas en ${materia.nombre} (Trimestre ${tri}).`, 'notas');
+  res.json({ mensaje: 'Nota guardada correctamente', estudiante_id, materia_id, trimestre: tri, ...valores });
 }));
 
 // ---------- TAREAS ----------
 router.post('/tareas', upload.single('archivo'), asyncHandler(async (req, res) => {
-  const { asignacion_id, titulo, descripcion, tipo, fecha_entrega, link } = req.body || {};
+  const { asignacion_id, titulo, descripcion, tipo, fecha_entrega, trimestre, link } = req.body || {};
   requerirCampos({ asignacion_id, titulo }, ['asignacion_id', 'titulo']);
   if (!esEnteroPositivo(asignacion_id)) throw badRequest('asignacion_id inválido');
   const tipos = ['tarea', 'actividad', 'trabajo_practico', 'examen'];
   if (tipo && !tipos.includes(tipo)) throw badRequest(`tipo debe ser: ${tipos.join(', ')}`);
+  const tri = trimestre === undefined ? 1 : Number(trimestre);
+  if (![1, 2, 3].includes(tri)) throw badRequest('trimestre debe ser 1..3');
   const a = obtenerAsignacion(Number(asignacion_id), req.usuario);
   const archivoPath = req.file ? req.file.filename : null;
-  const r = db.prepare(`INSERT INTO tareas (asignacion_id, titulo, descripcion, tipo, fecha_entrega, archivo_path, link)
-                        VALUES (?,?,?,?,?,?,?)`)
-    .run(a.id, titulo, descripcion || null, tipo || 'tarea', fecha_entrega || null, archivoPath, link || null);
+  const r = db.prepare(`INSERT INTO tareas (asignacion_id, titulo, descripcion, tipo, fecha_entrega, trimestre, archivo_path, link)
+                        VALUES (?,?,?,?,?,?,?,?)`)
+    .run(a.id, titulo, descripcion || null, tipo || 'tarea', fecha_entrega || null, tri, archivoPath, link || null);
   const tareaId = Number(r.lastInsertRowid);
   const estudiantes = db.prepare('SELECT id, nombres, apellidos FROM estudiantes WHERE curso_id = ?').all(a.curso_id);
   const ins = db.prepare("INSERT INTO entregas (tarea_id, estudiante_id, estado) VALUES (?,?,'pendiente')");
@@ -243,7 +191,7 @@ router.post('/tareas', upload.single('archivo'), asyncHandler(async (req, res) =
     notificarTutores(e.id, `Nueva tarea de ${a.materia}`,
       `Se publicó "${titulo}" (${tipo || 'tarea'}) para ${e.nombres} ${e.apellidos}. Fecha de entrega: ${fecha_entrega || 'sin definir'}.`, 'tarea');
   }
-  res.status(201).json({ id: tareaId, asignacion_id: a.id, titulo, tipo: tipo || 'tarea' });
+  res.status(201).json({ id: tareaId, asignacion_id: a.id, titulo, tipo: tipo || 'tarea', trimestre: tri });
 }));
 
 router.get('/tareas', asyncHandler(async (req, res) => {
@@ -283,36 +231,29 @@ function obtenerTarea(tareaId, usuario) {
 
 router.put('/tareas/:id', upload.single('archivo'), asyncHandler(async (req, res) => {
   const t = obtenerTarea(req.params.id, req.usuario);
-  const { asignacion_id, titulo, descripcion, tipo, fecha_entrega, link } = req.body || {};
+  const { asignacion_id, titulo, descripcion, tipo, fecha_entrega, trimestre, link } = req.body || {};
   const tipos = ['tarea', 'actividad', 'trabajo_practico', 'examen'];
   if (tipo && !tipos.includes(tipo)) throw badRequest(`tipo debe ser: ${tipos.join(', ')}`);
-  let asignacion = t;
-  if (asignacion_id !== undefined && Number(asignacion_id) !== t.asignacion_id) {
-    if (!esEnteroPositivo(asignacion_id)) throw badRequest('asignacion_id inválido');
-    asignacion = db.prepare('SELECT a.*, c.nombre AS curso, m.nombre AS materia FROM asignaciones a JOIN cursos c ON c.id=a.curso_id JOIN materias m ON m.id=a.materia_id WHERE a.id=?').get(asignacion_id);
-    if (!asignacion) throw noEncontrado('La clase seleccionada no existe');
-    if (req.usuario.rol === 'docente' && asignacion.docente_id !== req.usuario.id) throw prohibido('No puede asignar la tarea a una clase ajena');
-  }
+  const tri = trimestre === undefined ? t.trimestre : Number(trimestre);
+  if (![1, 2, 3].includes(tri)) throw badRequest('trimestre debe ser 1..3');
+  const asignacion = asignacion_id === undefined
+    ? { id: t.asignacion_id }
+    : obtenerAsignacion(Number(asignacion_id), req.usuario);
   if (req.file && t.archivo_path) {
     try { fs.unlinkSync(path.join(UPLOAD_DIR, t.archivo_path)); } catch (_) { /* archivo ya no existe */ }
   }
-  db.prepare('UPDATE tareas SET asignacion_id=?, titulo=?, descripcion=?, tipo=?, fecha_entrega=?, link=?, archivo_path=? WHERE id=?')
+  db.prepare('UPDATE tareas SET asignacion_id=?, titulo=?, descripcion=?, tipo=?, fecha_entrega=?, trimestre=?, link=?, archivo_path=? WHERE id=?')
     .run(
       asignacion.id,
       titulo || t.titulo,
       descripcion !== undefined ? descripcion : t.descripcion,
       tipo || t.tipo,
       fecha_entrega !== undefined ? fecha_entrega : t.fecha_entrega,
+      tri,
       link !== undefined ? link : t.link,
       req.file ? req.file.filename : t.archivo_path,
       t.id
     );
-  if (asignacion.id !== t.asignacion_id) {
-    db.prepare('DELETE FROM entregas WHERE tarea_id = ?').run(t.id);
-    const estudiantes = db.prepare('SELECT id, nombres, apellidos FROM estudiantes WHERE curso_id = ?').all(asignacion.curso_id);
-    const insertar = db.prepare("INSERT INTO entregas (tarea_id, estudiante_id, estado) VALUES (?,?,'pendiente')");
-    for (const estudiante of estudiantes) insertar.run(t.id, estudiante.id);
-  }
   res.json({ mensaje: 'Tarea actualizada correctamente' });
 }));
 
@@ -332,23 +273,50 @@ router.get('/entregas', asyncHandler(async (req, res) => {
   const tarea = obtenerTarea(Number(tarea_id), req.usuario);
   const entregas = db.prepare(`
     SELECT en.id, en.tarea_id, en.estudiante_id, en.estado, en.fecha_entrega, en.archivo_path,
-              en.revisada, en.revision_comentario, en.revision_fecha,
-              e.nombres, e.apellidos, e.rude,
-              ct.trimestre AS calificacion_trimestre,
-              ct.componente AS calificacion_componente,
-              ct.valor AS calificacion_valor
-            FROM entregas en
-            JOIN estudiantes e ON e.id = en.estudiante_id
-            LEFT JOIN calificaciones_tareas ct ON ct.entrega_id = en.id
+           en.revisada, en.revision_comentario, en.revision_fecha,
+           ct.ser AS calificacion_ser, ct.saber AS calificacion_saber, ct.hacer AS calificacion_hacer,
+           e.nombres, e.apellidos, e.rude
+    FROM entregas en JOIN estudiantes e ON e.id = en.estudiante_id
+    LEFT JOIN calificaciones_tareas ct ON ct.entrega_id = en.id
     WHERE en.tarea_id = ? ORDER BY e.apellidos, e.nombres
   `).all(tarea.id);
   res.json({ tarea: { id: tarea.id, titulo: tarea.titulo, materia: tarea.materia }, entregas });
 }));
 
-router.put('/entregas/:id/revisar', asyncHandler(async (req, res) => {
-  const { comentario, trimestre, componente, valor } = req.body || {};
+router.put('/entregas/:id/calificar', asyncHandler(async (req, res) => {
   const entrega = db.prepare(`
-    SELECT en.*, t.titulo, a.docente_id, a.materia_id, e.usuario_id
+    SELECT en.id, en.estudiante_id, t.trimestre, a.materia_id, a.docente_id
+    FROM entregas en JOIN tareas t ON t.id = en.tarea_id JOIN asignaciones a ON a.id = t.asignacion_id
+    WHERE en.id = ?
+  `).get(req.params.id);
+  if (!entrega) throw noEncontrado('Entrega no encontrada');
+  if (req.usuario.rol === 'docente' && entrega.docente_id !== req.usuario.id) throw prohibido('No puede calificar entregas ajenas');
+  const valores = {};
+  for (const componente of ['ser', 'saber', 'hacer']) {
+    if (req.body?.[componente] !== undefined && req.body[componente] !== null && req.body[componente] !== '') {
+      const valor = Number(req.body[componente]);
+      if (!Number.isFinite(valor) || valor < 0 || valor > MAX_NOTAS[componente]) throw badRequest(`${componente} debe estar entre 0 y ${MAX_NOTAS[componente]}`);
+      valores[componente] = valor;
+    }
+  }
+  if (!Object.keys(valores).length) throw badRequest('Debe registrar al menos una calificación: ser, saber o hacer');
+  const existente = db.prepare('SELECT id FROM calificaciones_tareas WHERE entrega_id = ?').get(entrega.id);
+  if (existente) {
+    db.prepare('UPDATE calificaciones_tareas SET ser=COALESCE(?, ser), saber=COALESCE(?, saber), hacer=COALESCE(?, hacer), componente=?, valor=?, updated_at=datetime(\'now\',\'localtime\') WHERE id=?')
+      .run(valores.ser ?? null, valores.saber ?? null, valores.hacer ?? null, Object.keys(valores)[0], valores[Object.keys(valores)[0]], existente.id);
+  } else {
+    const componente = Object.keys(valores)[0];
+    db.prepare(`INSERT INTO calificaciones_tareas (entrega_id, estudiante_id, materia_id, trimestre, componente, valor, ser, saber, hacer, docente_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      .run(entrega.id, entrega.estudiante_id, entrega.materia_id, entrega.trimestre, componente, valores[componente], valores.ser ?? null, valores.saber ?? null, valores.hacer ?? null, req.usuario.id);
+  }
+  res.json({ mensaje: 'Calificación guardada correctamente', entrega_id: entrega.id, trimestre: entrega.trimestre, ...valores });
+}));
+
+router.put('/entregas/:id/revisar', asyncHandler(async (req, res) => {
+  const { comentario, componente, valor, trimestre } = req.body || {};
+  const entrega = db.prepare(`
+    SELECT en.*, t.titulo, a.docente_id, e.usuario_id
     FROM entregas en
     JOIN tareas t ON t.id = en.tarea_id
     JOIN asignaciones a ON a.id = t.asignacion_id
@@ -358,58 +326,30 @@ router.put('/entregas/:id/revisar', asyncHandler(async (req, res) => {
   if (!entrega) throw noEncontrado('Entrega no encontrada');
   if (req.usuario.rol === 'docente' && entrega.docente_id !== req.usuario.id) throw prohibido('No puede revisar entregas ajenas');
   const texto = comentario === undefined || comentario === null ? null : String(comentario).trim().slice(0, 1000);
-  const componentes = { ser: 10, saber: 45, hacer: 40 };
-  let nota = null;
-  if (componente !== undefined || valor !== undefined || trimestre !== undefined) {
-    const bim = Number(trimestre);
-    const limite = componentes[String(componente || '').toLowerCase()];
-    const numero = Number(valor);
-    if (![1, 2, 3].includes(bim)) throw badRequest('trimestre debe ser 1..3');
-    if (!limite || !Number.isFinite(numero) || numero < 0 || numero > limite) {
-      throw badRequest(`valor inválido para ${componente}; debe estar entre 0 y ${limite || 0}`);
-    }
-    const calificacion = db.prepare('SELECT id, componente FROM calificaciones_tareas WHERE entrega_id = ?').get(entrega.id);
-    const componentesARecalcular = new Set([String(componente).toLowerCase()]);
-    if (calificacion) componentesARecalcular.add(calificacion.componente);
-    if (calificacion) {
-      db.prepare("UPDATE calificaciones_tareas SET trimestre=?, componente=?, valor=?, docente_id=?, updated_at=datetime('now','localtime') WHERE id=?")
-        .run(bim, String(componente).toLowerCase(), numero, req.usuario.id, calificacion.id);
-    } else {
-      db.prepare('INSERT INTO calificaciones_tareas (entrega_id, estudiante_id, materia_id, trimestre, componente, valor, docente_id) VALUES (?,?,?,?,?,?,?)')
-        .run(entrega.id, entrega.estudiante_id, entrega.materia_id, bim, String(componente).toLowerCase(), numero, req.usuario.id);
-    }
-    const actual = db.prepare(
-      'SELECT * FROM notas WHERE estudiante_id = ? AND materia_id = ? AND bimestre = ?',
-    ).get(entrega.estudiante_id, entrega.materia_id, bim);
-    const valores = {
-      ser: actual?.ser ?? 0,
-      saber: actual?.saber ?? 0,
-      hacer: actual?.hacer ?? 0,
-      decidir: actual?.decidir ?? 0,
-    };
-    for (const campo of componentesARecalcular) {
-      const promedio = db.prepare(
-        'SELECT AVG(valor) AS promedio FROM calificaciones_tareas WHERE estudiante_id=? AND materia_id=? AND trimestre=? AND componente=?',
-      ).get(entrega.estudiante_id, entrega.materia_id, bim, campo).promedio;
-      if (promedio !== null) valores[campo] = Math.round(Number(promedio) * 100) / 100;
-    }
-    if (actual) {
-      db.prepare('UPDATE notas SET ser=?, saber=?, hacer=?, decidir=? WHERE id=?')
-        .run(valores.ser, valores.saber, valores.hacer, valores.decidir, actual.id);
-    } else {
-      db.prepare(
-        'INSERT INTO notas (estudiante_id, materia_id, bimestre, ser, saber, hacer, decidir) VALUES (?,?,?,?,?,?,?)',
-      ).run(entrega.estudiante_id, entrega.materia_id, bim, valores.ser, valores.saber, valores.hacer, valores.decidir);
-    }
-    nota = { trimestre: bim, componente: String(componente).toLowerCase(), valor: numero };
-  }
   db.prepare("UPDATE entregas SET revisada=1, revision_comentario=?, revision_fecha=datetime('now','localtime'), revision_docente_id=? WHERE id=?")
     .run(texto || null, req.usuario.id, entrega.id);
   if (entrega.usuario_id) {
     db.prepare('INSERT INTO notificaciones (usuario_id, titulo, mensaje, tipo) VALUES (?,?,?,?)')
       .run(entrega.usuario_id, 'Tarea revisada', `Tu tarea "${entrega.titulo}" fue revisada por el docente.`, 'tarea_revisada');
   }
-  res.json({ mensaje: 'Entrega revisada correctamente', revisada: true, comentario: texto, nota });
+  if (componente !== undefined || valor !== undefined) {
+    if (!['ser', 'saber', 'hacer'].includes(componente)) throw badRequest('componente debe ser ser, saber o hacer');
+    const nota = Number(valor);
+    if (!Number.isFinite(nota) || nota < 0 || nota > MAX_NOTAS[componente]) throw badRequest(`${componente} debe estar entre 0 y ${MAX_NOTAS[componente]}`);
+    const tri = trimestre === undefined ? db.prepare('SELECT trimestre FROM tareas WHERE id = (SELECT tarea_id FROM entregas WHERE id = ?)').get(entrega.id).trimestre : Number(trimestre);
+    if (![1, 2, 3].includes(tri)) throw badRequest('trimestre debe ser 1..3');
+    const existente = db.prepare('SELECT id FROM calificaciones_tareas WHERE entrega_id = ?').get(entrega.id);
+    if (existente) {
+      db.prepare(`UPDATE calificaciones_tareas SET trimestre=?, componente=?, valor=?, ${componente}=?, updated_at=datetime('now','localtime') WHERE id=?`)
+        .run(tri, componente, nota, nota, existente.id);
+    } else {
+      const materia = db.prepare('SELECT a.materia_id FROM tareas t JOIN asignaciones a ON a.id = t.asignacion_id WHERE t.id = ?').get(entrega.tarea_id);
+      db.prepare(`INSERT INTO calificaciones_tareas (entrega_id, estudiante_id, materia_id, trimestre, componente, valor, ${componente}, docente_id)
+                  VALUES (?,?,?,?,?,?,?,?)`)
+        .run(entrega.id, entrega.estudiante_id, materia.materia_id, tri, componente, nota, nota, req.usuario.id);
+    }
+  }
+  res.json({ mensaje: 'Entrega revisada correctamente', revisada: true, comentario: texto, calificada: componente !== undefined || valor !== undefined });
 }));
 
 // Marcar entrega (docente/admin)

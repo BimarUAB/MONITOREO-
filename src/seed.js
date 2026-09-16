@@ -83,7 +83,7 @@ db.tx(() => {
   insAsig.run(docentes[7], materias['CIENCIAS NATURALES: FÍSICA'], cursos[3], gestionId);
 
   // Notas de trimestres 1 y 2 para todos (Matemática/Lengua 1° y Matemática/Ciencias Sociales 4°)
-  const insNota = db.prepare('INSERT INTO notas (estudiante_id, materia_id, bimestre, ser, saber, hacer, decidir) VALUES (?,?,?,?,?,?,?)');
+  const insNota = db.prepare('INSERT INTO notas (estudiante_id, materia_id, trimestre, ser, saber, hacer, decidir) VALUES (?,?,?,?,?,?,?)');
   const rand = (min, max) => Math.round((min + Math.random() * (max - min)) * 2) / 2;
   const plan = [
     { curso: 0, materia: materias['MATEMÁTICA'] },

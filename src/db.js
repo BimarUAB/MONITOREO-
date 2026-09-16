@@ -74,12 +74,12 @@ CREATE TABLE IF NOT EXISTS notas (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   estudiante_id INTEGER NOT NULL REFERENCES estudiantes(id) ON DELETE CASCADE,
   materia_id INTEGER NOT NULL REFERENCES materias(id) ON DELETE CASCADE,
-  bimestre INTEGER NOT NULL CHECK (bimestre BETWEEN 1 AND 3),
+  trimestre INTEGER NOT NULL CHECK (trimestre BETWEEN 1 AND 3),
   ser REAL NOT NULL DEFAULT 0,
   saber REAL NOT NULL DEFAULT 0,
   hacer REAL NOT NULL DEFAULT 0,
   decidir REAL NOT NULL DEFAULT 0,
-  UNIQUE (estudiante_id, materia_id, bimestre)
+  UNIQUE (estudiante_id, materia_id, trimestre)
 );
 
 CREATE TABLE IF NOT EXISTS calificaciones_tareas (
@@ -90,6 +90,9 @@ CREATE TABLE IF NOT EXISTS calificaciones_tareas (
   trimestre INTEGER NOT NULL CHECK (trimestre BETWEEN 1 AND 3),
   componente TEXT NOT NULL CHECK (componente IN ('ser','saber','hacer')),
   valor REAL NOT NULL CHECK (valor >= 0),
+  ser REAL,
+  saber REAL,
+  hacer REAL,
   docente_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
   created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
@@ -103,6 +106,7 @@ CREATE TABLE IF NOT EXISTS tareas (
   tipo TEXT NOT NULL DEFAULT 'tarea' CHECK (tipo IN ('tarea','actividad','trabajo_practico','examen')),
   fecha_publicacion TEXT NOT NULL DEFAULT (datetime('now','localtime')),
   fecha_entrega TEXT,
+  trimestre INTEGER NOT NULL DEFAULT 1 CHECK (trimestre BETWEEN 1 AND 3),
   archivo_path TEXT,
   link TEXT
 );
@@ -193,6 +197,19 @@ if (!columnasEntregas.includes('archivo_size')) db.exec('ALTER TABLE entregas AD
 if (!columnasEntregas.includes('comentario_estudiante')) db.exec('ALTER TABLE entregas ADD COLUMN comentario_estudiante TEXT');
 if (!columnasEntregas.includes('enviada_at')) db.exec('ALTER TABLE entregas ADD COLUMN enviada_at TEXT');
 if (!columnasEntregas.includes('es_tardia')) db.exec('ALTER TABLE entregas ADD COLUMN es_tardia INTEGER NOT NULL DEFAULT 0');
+
+const columnasTareas = db.prepare('PRAGMA table_info(tareas)').all().map((columna) => columna.name);
+if (!columnasTareas.includes('trimestre')) db.exec('ALTER TABLE tareas ADD COLUMN trimestre INTEGER NOT NULL DEFAULT 1 CHECK (trimestre BETWEEN 1 AND 3)');
+const columnasCalificaciones = db.prepare('PRAGMA table_info(calificaciones_tareas)').all().map((columna) => columna.name);
+if (!columnasCalificaciones.includes('ser')) db.exec('ALTER TABLE calificaciones_tareas ADD COLUMN ser REAL');
+if (!columnasCalificaciones.includes('saber')) db.exec('ALTER TABLE calificaciones_tareas ADD COLUMN saber REAL');
+if (!columnasCalificaciones.includes('hacer')) db.exec('ALTER TABLE calificaciones_tareas ADD COLUMN hacer REAL');
+
+// Renombra la columna histórica sin perder las notas ya registradas.
+const columnasNotas = db.prepare('PRAGMA table_info(notas)').all().map((columna) => columna.name);
+if (columnasNotas.includes('bimestre') && !columnasNotas.includes('trimestre')) {
+  db.exec('ALTER TABLE notas RENAME COLUMN bimestre TO trimestre');
+}
 
 module.exports = db;
 

@@ -98,8 +98,9 @@ Ana,Rojas,2011-08-02,1,2026-1S-999
 | Método | Ruta | Body / Query | Response |
 |---|---|---|---|
 | GET | `/api/docente/asignaciones` | — | Mis materias/cursos con total de estudiantes |
-| GET | `/api/docente/estudiantes` | `?asignacion_id=` obligatorio, `?trimestre=1..3` opcional | Estudiantes del curso + notas; con `trimestre` incluye `nota_trimestre` (promedio y cualitativo) |
+| GET | `/api/docente/estudiantes` | `?asignacion_id=` obligatorio, `?trimestre=1..3` opcional | Estudiantes del curso + notas trimestrales; con `trimestre` incluye `nota_trimestre` (promedio y cualitativo) |
 | PUT | `/api/notas` | `{estudiante_id, materia_id, trimestre:1..3, ser (≤10), saber (≤45), hacer (≤40), decidir (≤5)}` | Upsert. Valida máximos y que el docente tenga la materia en el curso del estudiante. El componente `decidir` es la autoevaluación del estudiante. **Notifica a los tutores**. |
+| PUT | `/api/entregas/:id/calificar` | `{ser?, saber?, hacer?}` | Guarda o actualiza las dimensiones de la calificación de una entrega. Límites: Ser 10, Saber 45, Hacer 40. |
 | POST | `/api/tareas` | multipart o JSON `{asignacion_id, titulo, descripcion?, tipo?, fecha_entrega?, link?, archivo?}` | `201`. Crea entregas `pendiente` para cada estudiante del curso y **notifica a tutores**. `tipo`: `tarea\|actividad\|trabajo_practico\|examen` |
 | GET | `/api/tareas` | `?asignacion_id=` | Tareas con conteo de entregas pendientes/completadas |
 | PUT | `/api/tareas/:id` | multipart o JSON (mismos campos) | Actualizada |
@@ -171,15 +172,15 @@ curl -s http://localhost:3000/api/expediente/1 \
 
 **Escala cualitativa:** 90–100 Domina · 80–89.99 Sobresaliente · 70–79.99 Distinguido · 60–69.99 Bueno · 50–59.99 Suficiente · 0–49.99 Insuficiente.
 **Semáforo:** ≥80 verde · 50–79.99 amarillo · <50 rojo.
-**Aprobación:** promedio anual (media de bimestres registrados, sobre 100) ≥ 51.
-**Puntos necesarios:** `204 − Σ(bimestres registrados)` = puntos totales que faltan entre los bimestres restantes para llegar a 51×4 (ej. 70+65 registrados → faltan 69).
+**Aprobación:** promedio anual (media de trimestres registrados, sobre 100) ≥ 51.
+**Puntos necesarios:** `153 − Σ(trimestres registrados)` = puntos totales que faltan entre los trimestres restantes para llegar a 51×3.
 
 ## Reportes (rol `admin` y `docente` con curso asignado)
 
 | Método | Ruta | Query | Response |
 |---|---|---|---|
 | GET | `/api/reportes/rendimiento` | `?curso_id=` obligatorio, `?gestion=` opcional | Por materia: promedio del curso, % en riesgo (<50), distribución cualitativa |
-| GET | `/api/reportes/riesgo` | `?curso_id=` | Estudiantes con alguna materia con promedio del bimestre actual <50 o promedio anual <51, con detalle |
+| GET | `/api/reportes/riesgo` | `?curso_id=` | Estudiantes con alguna materia con promedio del trimestre actual <50 o promedio anual <51, con detalle |
 | GET | `/api/reportes/historial/:estudiante_id` | — | Notas de todas las gestiones (histórico) |
 
 ## Backup (rol `admin`)

@@ -4,8 +4,8 @@ const fs = require('fs');
 const multer = require('multer');
 const db = require('../db');
 const {
-  promedioBimestre, cualitativo, promedioAnual, semaforo, aprobado,
-  puntosNecesarios, porcentajeBimestresRegistrados, resumenAsistencia,
+  promedioTrimestre, cualitativo, promedioAnual, semaforo, aprobado,
+  puntosNecesarios, porcentajeTrimestresRegistrados, resumenAsistencia,
 } = require('../helpers');
 const {
   requerirCampos, badRequest, noEncontrado, prohibido,
@@ -64,21 +64,21 @@ function expedienteDe(estudianteId) {
   `).all(estudianteId, est.gestion_id);
   const notasPorMateria = {};
   for (const n of filasNotas) {
-    (notasPorMateria[n.materia_id] = notasPorMateria[n.materia_id] || {})[n.bimestre] = n;
+    (notasPorMateria[n.materia_id] = notasPorMateria[n.materia_id] || {})[n.trimestre] = n;
   }
 
-  // Promedio del curso por materia y bimestre (curso del estudiante; la gestión está en su curso)
+  // Promedio del curso por materia y trimestre (curso del estudiante; la gestión está en su curso)
   const promediosCurso = db.prepare(`
-    SELECT n.materia_id, n.bimestre, AVG(n.ser + n.saber + n.hacer + n.decidir) AS promedio
+    SELECT n.materia_id, n.trimestre, AVG(n.ser + n.saber + n.hacer + n.decidir) AS promedio
     FROM notas n
     JOIN estudiantes e ON e.id = n.estudiante_id
     WHERE e.curso_id = ?
-    GROUP BY n.materia_id, n.bimestre
+    GROUP BY n.materia_id, n.trimestre
   `).all(est.curso_id);
   const promedioCursoPorMateria = {};
   for (const p of promediosCurso) {
     const mapa = (promedioCursoPorMateria[p.materia_id] = promedioCursoPorMateria[p.materia_id] || {});
-    mapa[p.bimestre] = Math.round(p.promedio * 100) / 100;
+    mapa[p.trimestre] = Math.round(p.promedio * 100) / 100;
   }
   const promedioGeneralCurso = (materiaId) => {
     const porBim = promedioCursoPorMateria[materiaId];
@@ -88,16 +88,16 @@ function expedienteDe(estudianteId) {
   };
 
   const materias = asignaciones.map((a) => {
-    const porBimestre = [];
+    const porTrimestre = [];
     const proms = [];
     for (let b = 1; b <= 3; b++) {
       const n = (notasPorMateria[a.materia_id] || {})[b];
       if (n) {
-        const prom = promedioBimestre(n);
-        porBimestre.push({ bimestre: b, ser: n.ser, saber: n.saber, hacer: n.hacer, decidir: n.decidir, promedio: prom, cualitativo: cualitativo(prom), promedio_curso: promedioCursoPorMateria[a.materia_id]?.[b] ?? null });
+        const prom = promedioTrimestre(n);
+        porTrimestre.push({ trimestre: b, ser: n.ser, saber: n.saber, hacer: n.hacer, decidir: n.decidir, promedio: prom, cualitativo: cualitativo(prom), promedio_curso: promedioCursoPorMateria[a.materia_id]?.[b] ?? null });
         proms.push(prom);
       } else {
-        porBimestre.push({ bimestre: b, ser: null, saber: null, hacer: null, decidir: null, promedio: null, cualitativo: null, promedio_curso: promedioCursoPorMateria[a.materia_id]?.[b] ?? null });
+        porTrimestre.push({ trimestre: b, ser: null, saber: null, hacer: null, decidir: null, promedio: null, cualitativo: null, promedio_curso: promedioCursoPorMateria[a.materia_id]?.[b] ?? null });
       }
     }
     const anual = promedioAnual(proms);
@@ -106,25 +106,27 @@ function expedienteDe(estudianteId) {
       materia_id: a.materia_id,
       materia: a.materia,
       docente: a.docente,
-      trimestres: porBimestre,
+      trimestres: porTrimestre,
       promedio_anual: anual,
       cualitativo_anual: anual !== null ? cualitativo(anual) : null,
       semaforo: semaforo(anual),
       aprobado: aprobado(anual),
       puntos_necesarios: puntosNecesarios(proms),
-      porcentaje_registrado: porcentajeBimestresRegistrados(proms),
+      porcentaje_registrado: porcentajeTrimestresRegistrados(proms),
       promedio_curso: promedioGeneralCurso(a.materia_id),
     };
   });
 
   // Tareas del estudiante (entregas del curso en la gestión); no se expone la ruta interna del archivo
   const tareas = db.prepare(`
-        SELECT t.id AS tarea_id, t.titulo, t.descripcion, t.tipo, t.fecha_publicacion, t.fecha_entrega, t.link,
+        SELECT t.id AS tarea_id, t.titulo, t.descripcion, t.tipo, t.trimestre, t.fecha_publicacion, t.fecha_entrega, t.link,
           m.nombre AS materia, en.id AS entrega_id, en.estado, en.fecha_entrega AS fecha_entregada,
            en.revisada, en.revision_comentario, en.revision_fecha,
+           ct.ser AS calificacion_ser, ct.saber AS calificacion_saber, ct.hacer AS calificacion_hacer,
            CASE WHEN en.archivo_path IS NOT NULL THEN 1 ELSE 0 END AS tiene_archivo,
            en.nombre_original, en.comentario_estudiante, en.enviada_at, en.es_tardia
     FROM entregas en
+    LEFT JOIN calificaciones_tareas ct ON ct.entrega_id = en.id
     JOIN tareas t ON t.id = en.tarea_id
     JOIN asignaciones a ON a.id = t.asignacion_id
     JOIN materias m ON m.id = a.materia_id
