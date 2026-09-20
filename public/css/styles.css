@@ -591,14 +591,17 @@ table.tabla tr:hover td { background: #fafcfe; }
   .tab span {
     display: grid;
     place-items: center;
-    width: 38px;
-    height: 38px;
+    width: 44px;
+    height: 44px;
     flex: none;
     border-radius: 10px;
     color: var(--rojo-institucional);
     background: var(--rojo-institucional-suave);
+    font-size: 1.55rem;
+    font-weight: 800;
+    line-height: 1;
   }
-  .tab svg { width: 25px; height: 25px; }
+  .tab svg { width: 32px; height: 32px; }
   .tab.active span { color: #fff; background: var(--rojo-institucional); }
   .view {
     width: calc(100% - var(--sidebar-w));
