@@ -14,6 +14,9 @@
   --amarillo-suave: #fdf3d7;
   --rojo: #d9534f;
   --rojo-suave: #fbeaea;
+  --rojo-institucional: #b52d3b;
+  --rojo-institucional-oscuro: #8f2030;
+  --rojo-institucional-suave: #f8e8eb;
   --naranja: #e67e22;
   --naranja-suave: #fdf0e2;
   --violeta: #7d5ba6;
@@ -30,6 +33,7 @@
   --fuente: 'Nunito', 'Segoe UI', system-ui, -apple-system, sans-serif;
   --header-h: 58px;
   --tabbar-h: 60px;
+  --sidebar-w: 176px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -64,7 +68,7 @@ h1, h2, h3, h4 { line-height: 1.25; font-weight: 800; }
   position: sticky;
   top: 0;
   z-index: 50;
-  background: linear-gradient(100deg, var(--azul-oscuro), var(--azul) 55%, var(--azul-claro));
+  background: linear-gradient(100deg, var(--azul-oscuro) 0%, var(--azul) 58%, var(--rojo-institucional) 100%);
   color: #fff;
   box-shadow: 0 2px 12px rgba(21, 90, 151, 0.35);
 }
@@ -196,6 +200,7 @@ h1, h2, h3, h4 { line-height: 1.25; font-weight: 800; }
 .btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .btn-primary { background: var(--azul); color: #fff; box-shadow: 0 3px 10px rgba(30, 111, 184, 0.3); }
 .btn-primary:hover { background: var(--azul-oscuro); }
+.btn-primary:focus-visible { outline: 3px solid var(--rojo-institucional-suave); outline-offset: 2px; }
 .btn-verde { background: var(--verde); color: #fff; }
 .btn-verde:hover { background: #257c49; }
 .btn-amarillo { background: var(--amarillo); color: #5a4304; }
@@ -399,6 +404,7 @@ h1, h2, h3, h4 { line-height: 1.25; font-weight: 800; }
 .login-escudo img { width: 100%; height: 100%; object-fit: cover; }
 .brand-logo img { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; background: #fff; display: block; }
 .login-titulo { text-align: center; font-size: 1.14rem; color: var(--azul-oscuro); }
+.login-titulo::after { content: ''; display: block; width: 54px; height: 3px; margin: 9px auto 0; border-radius: 3px; background: var(--rojo-institucional); }
 .login-sub { text-align: center; color: var(--texto-suave); font-size: 0.86rem; margin: 4px 0 2px; }
 .login-bienvenida {
   text-align: center;
@@ -409,23 +415,6 @@ h1, h2, h3, h4 { line-height: 1.25; font-weight: 800; }
   border-radius: var(--radio-sm);
   padding: 9px 12px;
   margin: 14px 0;
-}
-.login-demo {
-  margin-top: 14px;
-  font-size: 0.74rem;
-  color: var(--texto-suave);
-  background: var(--fondo);
-  border: 1px dashed var(--borde);
-  border-radius: var(--radio-sm);
-  padding: 9px 12px;
-  line-height: 1.7;
-}
-.login-demo code {
-  background: #e9edf2;
-  padding: 1px 6px;
-  border-radius: 5px;
-  font-size: 0.72rem;
-  cursor: pointer;
 }
 .login-pie { text-align: center; font-size: 0.74rem; color: var(--texto-suave); margin-top: 16px; }
 
@@ -565,34 +554,65 @@ table.tabla tr:hover td { background: #fafcfe; }
 
 @media (min-width: 900px) {
   .tabbar {
-    position: sticky;
+    position: fixed;
     top: var(--header-h);
-    bottom: auto;
+    bottom: 0;
+    left: 0;
+    right: auto;
+    width: var(--sidebar-w);
     border-top: none;
-    border-bottom: 1px solid var(--borde);
-    box-shadow: 0 3px 10px rgba(34,48,62,0.05);
+    border-right: 1px solid var(--borde);
+    box-shadow: 3px 0 14px rgba(34,48,62,0.08);
     height: auto;
+    flex-direction: column;
     justify-content: flex-start;
-    gap: 6px;
-    padding: 8px 14px calc(8px + env(safe-area-inset-bottom));
-    max-width: 1060px;
-    margin: 0 auto;
-    border-radius: 0 0 var(--radio) var(--radio);
+    gap: 4px;
+    padding: 14px 10px calc(14px + env(safe-area-inset-bottom));
+    overflow-y: auto;
+    border-radius: 0;
   }
-  .tabbar-item {
+  .tab {
     flex: none;
+    width: 100%;
+    min-width: 0;
     flex-direction: row;
-    gap: 7px;
+    justify-content: flex-start;
+    gap: 12px;
     font-size: 0.84rem;
-    padding: 8px 16px;
-    border-radius: 999px;
-    border: 2px solid var(--borde);
-    background: var(--blanco);
+    padding: 13px 14px;
+    border: 0;
+    border-left: 3px solid transparent;
+    border-radius: 8px;
+    background: transparent;
     color: var(--texto-suave);
   }
-  .tabbar-item.activa { background: var(--azul); color: #fff; border-color: var(--azul); }
-  .tabbar-item svg { width: 17px; height: 17px; }
-  .view { padding-bottom: 30px; }
+  .tab:hover, .tab:focus-visible { background: var(--rojo-institucional-suave); color: var(--rojo-institucional-oscuro); }
+  .tab.active { background: linear-gradient(90deg, var(--azul-suave), var(--rojo-institucional-suave)); color: var(--rojo-institucional-oscuro); border-left-color: var(--rojo-institucional); }
+  .tab span {
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    flex: none;
+    border-radius: 10px;
+    color: var(--rojo-institucional);
+    background: var(--rojo-institucional-suave);
+  }
+  .tab svg { width: 25px; height: 25px; }
+  .tab.active span { color: #fff; background: var(--rojo-institucional); }
+  .view {
+    width: calc(100% - var(--sidebar-w));
+    max-width: none;
+    margin-left: var(--sidebar-w);
+    margin-right: 0;
+    padding-bottom: 30px;
+  }
+  body:not(.logged-out) .view > * {
+    width: calc(100% - 40px);
+    max-width: 1060px;
+    margin-left: auto;
+    margin-right: auto;
+  }
 }
 
 /* ============ Modal ============ */

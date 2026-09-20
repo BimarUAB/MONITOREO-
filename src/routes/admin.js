@@ -9,7 +9,7 @@ const {
 const router = express.Router();
 router.use(['/usuarios', '/cursos', '/materias', '/admin/notificaciones'], requireRole('admin'));
 
-const ROLES = ['admin', 'docente', 'tutor', 'estudiante', 'asistencia'];
+const ROLES = ['admin', 'docente', 'tutor', 'asistencia'];
 function normalizarNombreMateria(nombre) {
   return String(nombre || '').replace(/\s+/g, ' ').trim().toUpperCase();
 }

@@ -333,6 +333,8 @@ router.put('/entregas/:id/calificar', asyncHandler(async (req, res) => {
     }
   }
   if (!Object.keys(valores).length) throw badRequest('Debe registrar al menos una calificación: ser, saber o hacer');
+  db.prepare("UPDATE entregas SET revisada=1, revision_fecha=datetime('now','localtime'), revision_docente_id=? WHERE id=?")
+    .run(req.usuario.id, entrega.id);
   const existente = db.prepare('SELECT id FROM calificaciones_tareas WHERE entrega_id = ?').get(entrega.id);
   if (existente) {
     db.prepare('UPDATE calificaciones_tareas SET ser=COALESCE(?, ser), saber=COALESCE(?, saber), hacer=COALESCE(?, hacer), componente=?, valor=?, updated_at=datetime(\'now\',\'localtime\') WHERE id=?')

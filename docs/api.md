@@ -29,7 +29,6 @@ El token JWT expira en **8 horas**. Roles: `admin`, `docente`, `tutor`, `estudia
 | `docente2` … `docente8` | `docente123` | docente | Otras materias/cursos |
 | `tutor1` | `tutor123` | tutor | 2 hijos en 1° Secundaria |
 | `tutor2` | `tutor123` | tutor | 1 hijo en 4° Secundaria |
-| `estudiante1` | `est123` | estudiante | 1° Secundaria (tiene usuario propio) |
 
 ## Reglas de privacidad
 

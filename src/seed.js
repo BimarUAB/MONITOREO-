@@ -1,5 +1,5 @@
 // Datos de demostración — Unidad Educativa "JESÚS MARÍA FE Y ALEGRÍA"
-// Credenciales: admin/admin123, docente1/docente123, tutor1/tutor123, estudiante1/est123
+// Credenciales: admin/admin123, docente1/docente123, tutor1/tutor123
 const bcrypt = require('bcryptjs');
 const db = require('./db');
 
@@ -61,14 +61,11 @@ db.tx(() => {
   // Estudiantes (12): 6 en 1° (curso[0]) y 6 en 4° (curso[3]); los 2 primeros con usuario propio
   const estudiantes = [];
   const insEst = db.prepare('INSERT INTO estudiantes (usuario_id, rude, nombres, apellidos, fecha_nacimiento, curso_id) VALUES (?,?,?,?,?,?)');
-  const est1 = Number(insUsuario.run('estudiante1', h('est123'), 'estudiante', NOMBRES_E[0], APELLIDOS_E[0], 'estudiante1@mail.com', null).lastInsertRowid);
-  const est2 = Number(insUsuario.run('estudiante2', h('est123'), 'estudiante', NOMBRES_E[1], APELLIDOS_E[1], 'estudiante2@mail.com', null).lastInsertRowid);
   for (let i = 0; i < 12; i++) {
     const cursoIdx = i < 6 ? 0 : 3;
     const gestionAnio = 2026;
     const rude = `${gestionAnio}-${cursoIdx === 0 ? '1' : '4'}S-${String(i + 1).padStart(3, '0')}`;
-    const usuarioId = i === 0 ? est1 : (i === 1 ? est2 : null);
-    estudiantes.push(Number(insEst.run(usuarioId, rude, NOMBRES_E[i], APELLIDOS_E[i], `201${3 - (i % 5)}-0${(i % 9) + 1}-1${i % 9}`, cursos[cursoIdx]).lastInsertRowid));
+    estudiantes.push(Number(insEst.run(null, rude, NOMBRES_E[i], APELLIDOS_E[i], `201${3 - (i % 5)}-0${(i % 9) + 1}-1${i % 9}`, cursos[cursoIdx]).lastInsertRowid));
   }
 
   // Asignaciones de demostración usando el catálogo oficial.
